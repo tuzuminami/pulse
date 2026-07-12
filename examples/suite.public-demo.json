@@ -1,0 +1,29 @@
+{
+  "suiteId": "public-demo-suite",
+  "version": "1.0.0",
+  "status": "published",
+  "cases": [
+    {
+      "id": "case-hello",
+      "input": {
+        "path": "/chat",
+        "method": "POST",
+        "body": {
+          "prompt": "hello"
+        }
+      },
+      "expected": {
+        "jsonFieldEquals": {
+          "field": "message",
+          "value": "hello accepted"
+        }
+      },
+      "tags": ["smoke"],
+      "classification": "public"
+    }
+  ],
+  "thresholds": {
+    "minPassRate": 1,
+    "maxInconclusiveRate": 0
+  }
+}

@@ -1,0 +1,365 @@
+openapi: 3.1.0
+info:
+  title: PULSE API
+  version: 1.0.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: Public contract for running versioned conversational AI evaluation suites and checking baseline regressions.
+servers:
+  - url: "{scheme}://{host}"
+    variables:
+      scheme:
+        default: http
+      host:
+        default: localhost:3000
+security:
+  - bearerAuth: []
+paths:
+  /v1/suites:
+    post:
+      operationId: publishSuite
+      summary: Publish an immutable evaluation suite version
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvalSuiteVersion"
+      responses:
+        "201":
+          description: Suite version accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /v1/runs:
+    post:
+      operationId: runSuite
+      summary: Run a published suite against a deterministic HTTP target
+      description: Target execution is denied unless the self-host supplies a targetPolicy allow rule.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [suiteId, suiteVersion, target]
+              properties:
+                suiteId:
+                  type: string
+                suiteVersion:
+                  type: string
+                target:
+                  type: object
+                  required: [baseUrl, timeoutMs]
+                  properties:
+                    baseUrl:
+                      type: string
+                      format: uri
+                    timeoutMs:
+                      type: integer
+                      minimum: 1
+                      maximum: 60000
+                    maxResponseBytes:
+                      type: integer
+                      minimum: 1
+                      maximum: 16777216
+      responses:
+        "201":
+          description: Run completed and persisted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "503":
+          $ref: "#/components/responses/RunPending"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /v1/runs/{runId}:
+    get:
+      operationId: getRun
+      summary: Fetch a run result and redacted traces
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run result
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/shadow-replays:
+    post:
+      operationId: compareShadowReplay
+      summary: Compare a replayed policy decision with a captured redacted receipt
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedReceipt, replayedDecision, subjectHash]
+              properties:
+                expectedReceipt:
+                  $ref: "#/components/schemas/DecisionReceipt"
+                replayedDecision:
+                  $ref: "#/components/schemas/DecisionResult"
+                subjectHash:
+                  type: string
+                  pattern: "^[a-f0-9]{64}$"
+      responses:
+        "200":
+          description: Deterministic replay comparison
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /v1/baselines:
+    post:
+      operationId: createBaseline
+      summary: Register a baseline for a suite version
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [suiteId, suiteVersion]
+              properties:
+                suiteId:
+                  type: string
+                suiteVersion:
+                  type: string
+                baselineId:
+                  type: string
+      responses:
+        "201":
+          description: Baseline registered
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /v1/regressions:
+    get:
+      operationId: getLatestRegression
+      summary: Compare the latest run with its baseline
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+      responses:
+        "200":
+          description: Regression check result
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    TenantId:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[a-z0-9][a-z0-9_-]{0,127}$"
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Authentication is required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Tenant scope or role is denied
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    IdempotencyConflict:
+      description: Idempotency key was reused with a different request body
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RunPending:
+      description: A matching run request is still executing. Retry the same idempotency key after the pending reservation completes or expires.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: The requested resource or prerequisite does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    DependencyUnavailable:
+      description: A required dependency or optional verification service is unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ValidationFailed:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details, correlationId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items: {}
+            correlationId:
+              type: string
+    DecisionResult:
+      type: object
+      additionalProperties: false
+      required: [outcome, reasonCode, policyReference]
+      properties:
+        outcome:
+          type: string
+          enum: [allow, deny]
+        reasonCode:
+          type: string
+          pattern: "^[A-Z][A-Z0-9_]{2,127}$"
+        policyReference:
+          type: string
+          maxLength: 256
+          description: Opaque, versioned policy identifier. Do not put prompts, request bodies, or secrets here.
+    DecisionReceipt:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, tenantId, subjectHash, issuedAt, outcome, reasonCode, policyReference, keyId, signature]
+      properties:
+        schemaVersion:
+          const: pulse.decision-receipt.v1
+        tenantId:
+          type: string
+          maxLength: 128
+        subjectHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        issuedAt:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum: [allow, deny]
+        reasonCode:
+          type: string
+          pattern: "^[A-Z][A-Z0-9_]{2,127}$"
+        policyReference:
+          type: string
+          maxLength: 256
+          description: Opaque, versioned policy identifier. Do not put prompts, request bodies, or secrets here.
+        keyId:
+          type: string
+          maxLength: 128
+        signature:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    EvalSuiteVersion:
+      type: object
+      required: [suiteId, version, status, cases, thresholds]
+      properties:
+        suiteId:
+          type: string
+        version:
+          type: string
+        status:
+          const: published
+        cases:
+          type: array
+          minItems: 1
+          items:
+            type: object
+        thresholds:
+          type: object
+          required: [minPassRate, maxInconclusiveRate]
+          properties:
+            minPassRate:
+              type: number
+              minimum: 0
+              maximum: 1
+            maxInconclusiveRate:
+              type: number
+              minimum: 0
+              maximum: 1
