@@ -15,6 +15,7 @@ export type VeilReplayMismatchReason =
   | "OBLIGATIONS_MISMATCH"
   | "REASON_CODES_MISMATCH"
   | "TENANT_ID_MISMATCH"
+  | "REQUEST_ID_MISMATCH"
   | "CORRELATION_ID_MISMATCH";
 
 /** Public VEIL v1 receipt shape, copied here without a VEIL runtime dependency. */
@@ -31,6 +32,7 @@ export interface VeilDecisionReceipt {
   readonly matchedRuleId?: string;
   readonly inputHash: string;
   readonly evidenceHash: string;
+  readonly requestId?: string;
   readonly correlationId: string;
   readonly createdAt: string;
   readonly receiptHash: string;
@@ -43,7 +45,7 @@ export interface AdaptedVeilDecisionReceipt {
 
 /**
  * The replay input is deliberately limited to public VEIL decision evidence.
- * tenantId and correlationId are optional for callers that do not retain them;
+ * tenantId, requestId, and correlationId are optional for callers that do not retain them;
  * when supplied, they are compared as safe metadata.
  */
 export interface VeilReplayedDecision {
@@ -56,6 +58,7 @@ export interface VeilReplayedDecision {
   readonly inputHash: string;
   readonly evidenceHash: string;
   readonly tenantId?: string;
+  readonly requestId?: string;
   readonly correlationId?: string;
 }
 
@@ -102,6 +105,9 @@ export function compareVeilDecisionReplay(
   if (replayedDecision.tenantId !== undefined && replayedDecision.tenantId !== expected.receipt.tenantId) {
     violations.push("TENANT_ID_MISMATCH");
   }
+  if (replayedDecision.requestId !== undefined && replayedDecision.requestId !== expected.receipt.requestId) {
+    violations.push("REQUEST_ID_MISMATCH");
+  }
   if (replayedDecision.correlationId !== undefined && replayedDecision.correlationId !== expected.receipt.correlationId) {
     violations.push("CORRELATION_ID_MISMATCH");
   }
@@ -119,7 +125,7 @@ export function validateVeilDecisionReceipt(receipt: unknown): asserts receipt i
   if (!isRecord(receipt)) throw invalidReceipt("VEIL decision receipt must be an object.");
   requireExactKeys(
     receipt,
-    ["receiptVersion", "decisionId", "tenantId", "policyId", "policyVersion", "policyHash", "action", "reasonCodes", "obligations", "matchedRuleId", "inputHash", "evidenceHash", "correlationId", "createdAt", "receiptHash"],
+    ["receiptVersion", "decisionId", "tenantId", "policyId", "policyVersion", "policyHash", "action", "reasonCodes", "obligations", "matchedRuleId", "inputHash", "evidenceHash", "requestId", "correlationId", "createdAt", "receiptHash"],
     "VEIL decision receipt"
   );
   if (receipt.receiptVersion !== VEIL_DECISION_RECEIPT_VERSION) {
@@ -135,6 +141,9 @@ export function validateVeilDecisionReceipt(receipt: unknown): asserts receipt i
   if (receipt.matchedRuleId !== undefined && !isNonEmptyString(receipt.matchedRuleId)) {
     throw invalidReceipt("VEIL decision receipt matchedRuleId must be a non-empty string when present.");
   }
+  if (receipt.requestId !== undefined && !isNonEmptyString(receipt.requestId)) {
+    throw invalidReceipt("VEIL decision receipt requestId must be a non-empty string when present.");
+  }
   const { receiptHash, ...contents } = receipt;
   if (receiptHash !== sha256(contents)) {
     throw invalidReceipt("VEIL decision receipt hash is invalid.");
@@ -147,7 +156,7 @@ export function veilActionToOutcome(action: VeilDecisionAction): VeilDecisionOut
 
 function validateVeilReplayedDecision(decision: unknown): asserts decision is VeilReplayedDecision {
   if (!isRecord(decision)) throw invalidReceipt("Replayed VEIL decision must be an object.");
-  requireExactKeys(decision, ["action", "policyId", "policyVersion", "policyHash", "reasonCodes", "obligations", "inputHash", "evidenceHash", "tenantId", "correlationId"], "Replayed VEIL decision");
+  requireExactKeys(decision, ["action", "policyId", "policyVersion", "policyHash", "reasonCodes", "obligations", "inputHash", "evidenceHash", "tenantId", "requestId", "correlationId"], "Replayed VEIL decision");
   if (!isVeilAction(decision.action)) throw invalidReceipt("Replayed VEIL decision action is invalid.");
   for (const field of ["policyId", "policyVersion", "policyHash", "inputHash", "evidenceHash"] as const) {
     if (!isNonEmptyString(decision[field])) throw invalidReceipt(`Replayed VEIL decision ${field} must be a non-empty string.`);
@@ -155,7 +164,7 @@ function validateVeilReplayedDecision(decision: unknown): asserts decision is Ve
   if (!isStringArray(decision.reasonCodes) || !isStringArray(decision.obligations)) {
     throw invalidReceipt("Replayed VEIL decision reasonCodes and obligations must be string arrays.");
   }
-  for (const field of ["tenantId", "correlationId"] as const) {
+  for (const field of ["tenantId", "requestId", "correlationId"] as const) {
     if (decision[field] !== undefined && !isNonEmptyString(decision[field])) {
       throw invalidReceipt(`Replayed VEIL decision ${field} must be a non-empty string when present.`);
     }
