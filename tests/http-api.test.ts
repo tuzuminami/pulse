@@ -419,6 +419,154 @@ describe("PULSE HTTP API", () => {
     equal(response.status, 422);
   });
 
+  it("TEST-BUDGET-001 rejects oversized suites and records redacted budget evidence", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-budget-"));
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "idempotency-key": "idem-budget-suite"
+    };
+    const oversizedSuite: EvalSuiteVersion = {
+      ...suite,
+      cases: [suite.cases[0]!, { ...suite.cases[0]!, id: "case-too-many" }]
+    };
+
+    const response = await processPulseHttpRequest(
+      { method: "POST", path: "/v1/suites", headers, body: oversizedSuite },
+      { ...authenticatedOptions, storeDir, evaluationBudget: { maxCasesPerSuite: 1 } }
+    );
+    const snapshot = await readStore(join(storeDir, "tenant_a.json"));
+
+    equal(response.status, 429);
+    equal(snapshot.suites.length, 0);
+    equal(snapshot.auditEvents[0]?.resourceType, "budget");
+    equal(snapshot.auditEvents[0]?.resourceId, "SUITE_CASE_LIMIT_EXCEEDED");
+    ok(!JSON.stringify(snapshot).includes("hello"));
+  });
+
+  it("TEST-BUDGET-002 rejects runs whose declared worst case exceeds the total deadline", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-budget-"));
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "idempotency-key": "idem-budget-publish"
+    };
+    const options = {
+      ...authenticatedOptions,
+      storeDir,
+      evaluationBudget: { maxTargetTimeoutMs: 1_000, maxRunDurationMs: 500 },
+      targetPolicy: allowAllTargets(async () => new Response(JSON.stringify({ message: "ok" }), { status: 200 }))
+    };
+    await processPulseHttpRequest({ method: "POST", path: "/v1/suites", headers, body: suite }, options);
+
+    const response = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-budget-deadline" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "http://target.local", timeoutMs: 1_000 } }
+      },
+      options
+    );
+    const snapshot = await readStore(join(storeDir, "tenant_a.json"));
+
+    equal(response.status, 429);
+    equal(snapshot.runs.length, 0);
+    equal(snapshot.auditEvents.at(-1)?.resourceId, "RUN_DEADLINE_LIMIT_EXCEEDED");
+  });
+
+  it("TEST-BUDGET-003 rejects a competing tenant run when no queue capacity remains", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-budget-"));
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "idempotency-key": "idem-budget-publish"
+    };
+    let releaseFetch: (() => void) | undefined;
+    let started: (() => void) | undefined;
+    const targetStarted = new Promise<void>((resolve) => { started = resolve; });
+    const options = {
+      ...authenticatedOptions,
+      storeDir,
+      evaluationBudget: { maxConcurrentRunsPerTenant: 1, maxQueuedRunsPerTenant: 0, maxRunsPerTargetPerMinute: 10 },
+      targetPolicy: allowAllTargets(async () => {
+        started?.();
+        await new Promise<void>((resolve) => { releaseFetch = resolve; });
+        return new Response(JSON.stringify({ message: "ok" }), { status: 200 });
+      })
+    };
+    await processPulseHttpRequest({ method: "POST", path: "/v1/suites", headers, body: suite }, options);
+    const first = processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-budget-first" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "http://target.local", timeoutMs: 1_000 } }
+      },
+      options
+    );
+    await targetStarted;
+
+    const competing = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-budget-competing" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "http://target.local", timeoutMs: 1_000 } }
+      },
+      options
+    );
+    releaseFetch?.();
+    const firstResult = await first;
+    const snapshot = await readStore(join(storeDir, "tenant_a.json"));
+
+    equal(firstResult.status, 201);
+    equal(competing.status, 429);
+    equal(snapshot.auditEvents.some((event) => event.resourceId === "TENANT_CONCURRENCY_LIMIT_EXCEEDED"), true);
+  });
+
+  it("TEST-BUDGET-004 enforces a per-target rate without persisting the target origin", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-budget-"));
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "idempotency-key": "idem-budget-publish"
+    };
+    const targetBaseUrl = "https://target-rate.local";
+    const options = {
+      ...authenticatedOptions,
+      storeDir,
+      evaluationBudget: { maxRunsPerTargetPerMinute: 1 },
+      targetPolicy: allowAllTargets(async () => new Response(JSON.stringify({ message: "ok" }), { status: 200 }))
+    };
+    await processPulseHttpRequest({ method: "POST", path: "/v1/suites", headers, body: suite }, options);
+    const first = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-budget-rate-first" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: targetBaseUrl, timeoutMs: 1_000 } }
+      },
+      options
+    );
+    const second = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-budget-rate-second" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: targetBaseUrl, timeoutMs: 1_000 } }
+      },
+      options
+    );
+    const snapshot = await readStore(join(storeDir, "tenant_a.json"));
+
+    equal(first.status, 201);
+    equal(second.status, 429);
+    equal(snapshot.auditEvents.at(-1)?.resourceId, "TARGET_RATE_LIMIT_EXCEEDED");
+    ok(!JSON.stringify(snapshot.auditEvents.at(-1)).includes(targetBaseUrl));
+    ok(!JSON.stringify(snapshot.outboxEvents.at(-1)).includes(targetBaseUrl));
+  });
+
   it("TEST-IDEMP-VALIDATION-001 validates targets before reserving a run idempotency key", async () => {
     const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-"));
     const headers = {

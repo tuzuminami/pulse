@@ -194,6 +194,8 @@ export interface RunOptions {
   readonly evaluatorRegistry?: EvaluatorRegistry;
   readonly idGenerator?: () => string;
   readonly now?: () => number;
+  /** Stops remaining cases once this wall-clock budget has elapsed. */
+  readonly deadlineMs?: number;
 }
 
 export interface PulseStoreSnapshot {
@@ -215,6 +217,14 @@ export interface WriteContext {
   readonly idGenerator?: () => string;
 }
 
+export type PersistedResourceType = "suite" | "run" | "baseline" | "budget";
+
+export interface BudgetExceededEvidence {
+  readonly code: string;
+  readonly targetHash?: string;
+  readonly caseCount?: number;
+}
+
 export interface AuditEvent {
   readonly eventId: string;
   readonly eventType: "pulse.audit.v1";
@@ -222,7 +232,7 @@ export interface AuditEvent {
   readonly tenantId: string;
   readonly actorId: string;
   readonly correlationId: string;
-  readonly resourceType: "suite" | "run" | "baseline";
+  readonly resourceType: PersistedResourceType;
   readonly resourceId: string;
   readonly reasonCode: string;
   readonly afterHash: string;
@@ -234,7 +244,7 @@ export interface OutboxEvent {
   readonly occurredAt: string;
   readonly tenantId: string;
   readonly correlationId: string;
-  readonly resourceType: "suite" | "run" | "baseline";
+  readonly resourceType: PersistedResourceType;
   readonly resourceId: string;
   readonly payloadHash: string;
 }
@@ -327,21 +337,36 @@ export function validateSuite(suite: EvalSuiteVersion): void {
 export async function runEvaluationSuite(options: RunOptions): Promise<EvalRun> {
   validateSuite(options.suite);
   validateTarget(options.target);
+  if (options.deadlineMs !== undefined && (!Number.isInteger(options.deadlineMs) || options.deadlineMs < 1)) {
+    throw new PulseEvalError("VALIDATION_FAILED", "deadlineMs must be a positive integer.");
+  }
   const fetchImpl = options.fetchImpl ?? fetch;
   const requestHeaders = normalizeRuntimeRequestHeaders(options.requestHeaders);
   const evaluatorRegistry = options.evaluatorRegistry ?? createDefaultEvaluatorRegistry();
   const caseResults: CaseResult[] = [];
+  const now = options.now ?? (() => Date.now());
+  const startedAt = now();
 
   for (const testCase of options.suite.cases) {
+    const remainingDeadlineMs = options.deadlineMs === undefined ? undefined : options.deadlineMs - (now() - startedAt);
+    if (remainingDeadlineMs !== undefined && remainingDeadlineMs <= 0) {
+      caseResults.push(budgetExceededCaseResult(testCase, "RUN_DEADLINE_EXCEEDED"));
+      continue;
+    }
     caseResults.push(
       await executeCase(
         testCase,
-        options.target,
+        remainingDeadlineMs === undefined
+          ? options.target
+          : { ...options.target, timeoutMs: Math.min(options.target.timeoutMs, remainingDeadlineMs) },
         requestHeaders,
         options.requestHeadersForCase,
         fetchImpl,
         evaluatorRegistry,
-        options.now ?? (() => Date.now())
+        now,
+        remainingDeadlineMs !== undefined && remainingDeadlineMs < options.target.timeoutMs
+          ? "RUN_DEADLINE_EXCEEDED"
+          : "TARGET_TIMEOUT"
       )
     );
   }
@@ -626,6 +651,17 @@ export async function saveBaseline(path: string, baseline: Baseline, context: Wr
   }, "baseline", baseline.baselineId, baseline, context));
 }
 
+export async function saveBudgetExceeded(
+  path: string,
+  evidence: BudgetExceededEvidence,
+  context: WriteContext
+): Promise<void> {
+  assertWriteContext(context);
+  requireNonEmpty(evidence.code, "BudgetExceededEvidence.code");
+  const snapshot = await readStore(path);
+  await writeStore(path, withEvidence(snapshot, "budget", evidence.code, evidence, context));
+}
+
 export async function saveIdempotencyRecord(
   path: string,
   record: IdempotencyRecord
@@ -700,7 +736,8 @@ async function executeCase(
   requestHeadersForCase: ((caseId: string) => Readonly<Record<string, string>>) | undefined,
   fetchImpl: typeof fetch,
   evaluatorRegistry: EvaluatorRegistry,
-  now: () => number
+  now: () => number,
+  timeoutReasonCode: "RUN_DEADLINE_EXCEEDED" | "TARGET_TIMEOUT"
 ): Promise<CaseResult> {
   const requestBody = canonicalJson(testCase.input.body);
   const startedAt = now();
@@ -748,10 +785,11 @@ async function executeCase(
     }
   } catch (error) {
     if (timedOut || error instanceof TargetTimeoutError) {
+      const timeoutLabel = timeoutReasonCode === "RUN_DEADLINE_EXCEEDED" ? "run-deadline-exceeded" : "target-timeout";
       return {
         caseId: testCase.id,
         outcome: "inconclusive",
-        evidenceHash: sha256(`${testCase.id}:target-timeout`),
+        evidenceHash: sha256(`${testCase.id}:${timeoutLabel}`),
         trace: {
           request: {
             path: testCase.input.path,
@@ -760,11 +798,11 @@ async function executeCase(
           },
           response: {
             status: 503,
-            bodyHash: sha256("target-timeout")
+            bodyHash: sha256(timeoutLabel)
           },
           durationMs: 0
         },
-        reasonCode: "TARGET_TIMEOUT"
+        reasonCode: timeoutReasonCode
       };
     }
     if (error instanceof ResponseBodyTooLargeError) {
@@ -1046,9 +1084,31 @@ function isEvalRun(resource: EvalSuiteVersion | EvalRun | Baseline): resource is
   return "runId" in resource;
 }
 
+function budgetExceededCaseResult(testCase: EvalCase, reasonCode: string): CaseResult {
+  const requestBody = canonicalJson(testCase.input.body);
+  return {
+    caseId: testCase.id,
+    outcome: "inconclusive",
+    evidenceHash: sha256(`${testCase.id}:${reasonCode}`),
+    trace: {
+      request: {
+        path: testCase.input.path,
+        method: testCase.input.method,
+        bodyHash: sha256(requestBody)
+      },
+      response: {
+        status: 429,
+        bodyHash: sha256(reasonCode)
+      },
+      durationMs: 0
+    },
+    reasonCode
+  };
+}
+
 function withEvidence(
   snapshot: PulseStoreSnapshot,
-  resourceType: AuditEvent["resourceType"],
+  resourceType: PersistedResourceType,
   resourceId: string,
   resource: unknown,
   context: WriteContext

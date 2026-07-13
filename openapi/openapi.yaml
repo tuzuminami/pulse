@@ -43,6 +43,8 @@ paths:
           $ref: "#/components/responses/DependencyUnavailable"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/EvaluationBudgetExceeded"
   /v1/runs:
     post:
       operationId: runSuite
@@ -92,6 +94,8 @@ paths:
           $ref: "#/components/responses/RunUnavailable"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/EvaluationBudgetExceeded"
   /v1/runs/{runId}:
     get:
       operationId: getRun
@@ -271,6 +275,12 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     ValidationFailed:
       description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    EvaluationBudgetExceeded:
+      description: A host-controlled tenant, queue, target-rate, suite-size, or execution-time budget was exceeded. Retry only after capacity is available or the host raises the configured limit.
       content:
         application/json:
           schema:

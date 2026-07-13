@@ -17,6 +17,7 @@ PULSE is a self-hostable evaluation harness for conversational AI. It runs versi
 - Tenant-scoped HTTP storage paths, caller-supplied principal checks, and fail-closed request validation.
 - Required idempotency keys for state-changing HTTP endpoints.
 - Required attributable write contexts and append-only audit/outbox events for persisted changes.
+- Host-configurable evaluation budgets for suite size, target timeout, total deadline, tenant concurrency/queueing, and target rate.
 - Public boundary guard to prevent accidental release of local-only operator material.
 
 ## Non-Goals
@@ -78,6 +79,8 @@ The public HTTP contract is documented in `openapi/openapi.yaml`. State-changing
 - `Idempotency-Key: <unique-operation-key>`
 
 The included HTTP handler is a deterministic harness boundary, not a production authentication system. The principal returned by `authenticate` must match `X-Tenant-Id`, use a lowercase ASCII tenant ID (`[a-z0-9][a-z0-9_-]{0,127}`), and have an operator role. HTTP target execution is fail-closed: self-hosts must provide a `targetPolicy` allow rule before `POST /v1/runs` can call any target. The bundled JSON store serializes writes only within one Node.js process; it is not a multi-replica persistence layer.
+
+The HTTP server applies an `evaluationBudget` even when the host does not configure one: 25 cases per suite, 10-second target timeout, 60-second total run deadline, two concurrent runs plus four queued runs per tenant, and 30 runs per target per minute. A host can lower or raise these numbers through `PulseApiOptions.evaluationBudget`. Exceeded budgets return `429 EVALUATION_BUDGET_EXCEEDED`; PULSE records a redacted audit/outbox event containing the budget reason and hashes rather than target credentials. These counters are process-local, so a multi-replica deployment must enforce matching distributed limits at its ingress or worker layer.
 
 `POST /v1/runs` holds a 60-second pending idempotency lease before target execution. A matching request waits fail-closed while the lease is live. After a process crash, the same request may be retried after the lease expires, so evaluation targets must be safe for at-least-once execution.
 
