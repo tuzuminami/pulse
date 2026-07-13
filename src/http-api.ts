@@ -46,6 +46,35 @@ export interface PulseTargetPolicy {
     readonly targetBaseUrl: string;
   }) => boolean;
   readonly fetch: typeof fetch;
+  /** Explicit outbound headers populated from trusted PULSE request context. */
+  readonly headerTemplates?: readonly PulseTargetHeaderTemplate[];
+  /**
+   * Resolves target credentials at execution time. Returned values are never
+   * stored in suites, traces, audit events, snapshots, or API error bodies.
+   */
+  readonly credentialProvider?: PulseTargetCredentialProvider;
+  /** Case-insensitive allowlist for header names returned by credentialProvider. */
+  readonly credentialHeaderNames?: readonly string[];
+}
+
+export interface PulseTargetCredentialRequest {
+  readonly tenantId: string;
+  readonly targetOrigin: string;
+  readonly correlationId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface PulseTargetCredentials {
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+export type PulseTargetCredentialProvider = (
+  input: PulseTargetCredentialRequest
+) => PulseTargetCredentials | undefined | Promise<PulseTargetCredentials | undefined>;
+
+export interface PulseTargetHeaderTemplate {
+  readonly name: "x-tenant-id" | "x-correlation-id" | "idempotency-key";
+  readonly value: "{{tenantId}}" | "{{correlationId}}" | "{{idempotencyKey}}";
 }
 
 interface RequestContext {
@@ -174,11 +203,42 @@ async function processAuthenticatedPulseHttpRequest(
           if (!suite) return { replay: errorResponse(422, "VALIDATION_FAILED", context.correlationId) };
           const targetPolicy = resolveTargetPolicy(body.target.baseUrl, context, options);
           if (!targetPolicy) return { replay: errorResponse(403, "TARGET_NOT_ALLOWED", context.correlationId) };
-          await saveIdempotencyRecord(storePath, pendingIdempotencyRecord(request));
           return { suite, body, targetPolicy };
         });
         if ("replay" in prepared) return prepared.replay;
-        const run = await runEvaluationSuite({ suite: prepared.suite, target: prepared.body.target, correlationId: context.correlationId, fetchImpl: prepared.targetPolicy.fetch });
+        const requestHeaders = await resolveTargetRequestHeaders(
+          prepared.targetPolicy,
+          context,
+          prepared.body.target.baseUrl,
+          idempotencyKey
+        );
+        if ("error" in requestHeaders) {
+          return errorResponse(503, requestHeaders.error, context.correlationId);
+        }
+        if (!idempotencyKey) {
+          return errorResponse(422, "IDEMPOTENCY_KEY_REQUIRED", context.correlationId);
+        }
+        const reservationReplay = await withTenantStoreTransaction(storePath, async () => {
+          const replay = await existingIdempotencyResponse(storePath, request, context, true);
+          if (replay) return replay;
+          await saveIdempotencyRecord(storePath, pendingIdempotencyRecord(request));
+          return undefined;
+        });
+        if (reservationReplay) return reservationReplay;
+        const run = await runEvaluationSuite({
+          suite: prepared.suite,
+          target: prepared.body.target,
+          correlationId: context.correlationId,
+          requestHeaders: requestHeaders.headers,
+          requestHeadersForCase: (caseId) =>
+            resolveHeaderTemplates(
+              prepared.targetPolicy.headerTemplates ?? [],
+              context,
+              idempotencyKey,
+              caseId
+            ) ?? {},
+          fetchImpl: prepared.targetPolicy.fetch
+        });
         const result = dataResponse(201, run, context);
         await withTenantStoreTransaction(storePath, () => saveResourceWithIdempotency(storePath, run, completedIdempotencyRecord(request, result), writeContext(context, "RUN_COMPLETED")));
         return result;
@@ -245,7 +305,7 @@ async function authenticate(
   options: PulseApiOptions
 ): Promise<RequestContext | { readonly status: 401 | 403; readonly error: string }> {
   const tenantId = request.headers["x-tenant-id"];
-  const correlationId = request.headers["x-correlation-id"] ?? "corr_generated";
+  const correlationId = normalizeCorrelationId(request.headers["x-correlation-id"]);
   if (!tenantId) {
     return { status: 401, error: "AUTHENTICATION_REQUIRED" };
   }
@@ -516,13 +576,142 @@ function resolveTargetPolicy(
     return undefined;
   }
   try {
+    const targetOrigin = new URL(targetBaseUrl).origin;
     return targetPolicy.allows({
       tenantId: context.tenantId,
-      targetBaseUrl
+      targetBaseUrl: targetOrigin
     }) ? targetPolicy : undefined;
   } catch {
     return undefined;
   }
+}
+
+async function resolveTargetRequestHeaders(
+  targetPolicy: PulseTargetPolicy,
+  context: RequestContext,
+  targetBaseUrl: string,
+  idempotencyKey: string | undefined
+): Promise<{ readonly headers: Readonly<Record<string, string>> } | { readonly error: "TARGET_CREDENTIALS_UNAVAILABLE" | "TARGET_CREDENTIALS_INVALID" }> {
+  if (!idempotencyKey) {
+    return { error: "TARGET_CREDENTIALS_INVALID" };
+  }
+
+  const templates = targetPolicy.headerTemplates ?? [];
+  if (!hasValidHeaderTemplates(templates)) {
+    return { error: "TARGET_CREDENTIALS_INVALID" };
+  }
+  if (!targetPolicy.credentialProvider) {
+    return { headers: {} };
+  }
+
+  const targetUrl = new URL(targetBaseUrl);
+  if (targetUrl.protocol !== "https:") {
+    return { error: "TARGET_CREDENTIALS_INVALID" };
+  }
+
+  let credentials: PulseTargetCredentials | undefined;
+  try {
+    credentials = await targetPolicy.credentialProvider({
+      tenantId: context.tenantId,
+      targetOrigin: targetUrl.origin,
+      correlationId: context.correlationId,
+      idempotencyKey
+    });
+  } catch {
+    return { error: "TARGET_CREDENTIALS_UNAVAILABLE" };
+  }
+  if (!credentials) {
+    return { error: "TARGET_CREDENTIALS_UNAVAILABLE" };
+  }
+
+  const credentialHeaders = normalizeCredentialHeaders(
+    credentials.headers,
+    targetPolicy.credentialHeaderNames ?? []
+  );
+  if (!credentialHeaders || Object.keys(credentialHeaders).length === 0) {
+    return { error: "TARGET_CREDENTIALS_INVALID" };
+  }
+  return { headers: credentialHeaders };
+}
+
+function resolveHeaderTemplates(
+  templates: readonly PulseTargetHeaderTemplate[],
+  context: RequestContext,
+  idempotencyKey: string,
+  caseId: string
+): Readonly<Record<string, string>> | undefined {
+  const values = {
+    "{{tenantId}}": context.tenantId,
+    "{{correlationId}}": context.correlationId,
+    "{{idempotencyKey}}": deriveTargetIdempotencyKey(context.tenantId, idempotencyKey, caseId)
+  } as const;
+  const permittedValues = {
+    "x-tenant-id": "{{tenantId}}",
+    "x-correlation-id": "{{correlationId}}",
+    "idempotency-key": "{{idempotencyKey}}"
+  } as const;
+  const headers: Record<string, string> = {};
+  for (const template of templates) {
+    if (permittedValues[template.name] !== template.value || template.name in headers) {
+      return undefined;
+    }
+    headers[template.name] = values[template.value];
+  }
+  return headers;
+}
+
+function hasValidHeaderTemplates(templates: readonly PulseTargetHeaderTemplate[]): boolean {
+  const permittedValues = {
+    "x-tenant-id": "{{tenantId}}",
+    "x-correlation-id": "{{correlationId}}",
+    "idempotency-key": "{{idempotencyKey}}"
+  } as const;
+  const seen = new Set<string>();
+  return templates.every((template) => {
+    if (seen.has(template.name) || permittedValues[template.name] !== template.value) return false;
+    seen.add(template.name);
+    return true;
+  });
+}
+
+function normalizeCredentialHeaders(
+  headers: Readonly<Record<string, string>>,
+  allowedNames: readonly string[]
+): Readonly<Record<string, string>> | undefined {
+  const allowed = new Set(allowedNames.map((name) => name.toLowerCase()));
+  const normalized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lowerName = name.toLowerCase();
+    if (
+      !/^[a-z0-9-]+$/.test(lowerName) ||
+      !allowed.has(lowerName) ||
+      lowerName in normalized ||
+      lowerName === "host" ||
+      lowerName === "cookie" ||
+      lowerName === "proxy-authorization" ||
+      lowerName === "connection" ||
+      lowerName === "content-length" ||
+      lowerName === "content-type" ||
+      lowerName === "x-tenant-id" ||
+      lowerName === "x-correlation-id" ||
+      lowerName === "idempotency-key" ||
+      typeof value !== "string" ||
+      value.length === 0 ||
+      /[\r\n]/.test(value)
+    ) {
+      return undefined;
+    }
+    normalized[lowerName] = value;
+  }
+  return normalized;
+}
+
+function deriveTargetIdempotencyKey(tenantId: string, operationIdempotencyKey: string, caseId: string): string {
+  return `pulse-${createHash("sha256").update(`${tenantId}\u0000${operationIdempotencyKey}\u0000${caseId}`, "utf8").digest("hex").slice(0, 32)}`;
+}
+
+function normalizeCorrelationId(value: string | undefined): string {
+  return value !== undefined && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : "corr_generated";
 }
 
 async function acquireTenantStoreLock(storePath: string): Promise<() => void> {

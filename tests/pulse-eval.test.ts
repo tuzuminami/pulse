@@ -273,6 +273,17 @@ describe("PULSE evaluation MVP", () => {
     };
 
     throws(() => validateSuite(malformedSuite), /relative HTTP path/);
+
+    const originEscapeSuite: EvalSuiteVersion = {
+      ...suite,
+      cases: [
+        {
+          ...suite.cases[0]!,
+          input: { ...suite.cases[0]!.input, path: "/\\attacker.example/collect" }
+        }
+      ]
+    };
+    throws(() => validateSuite(originEscapeSuite), /unsafe URL characters/);
   });
 
   it("TEST-VALIDATION-002 rejects unsafe target URLs before persistence", async () => {

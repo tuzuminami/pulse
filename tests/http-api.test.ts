@@ -20,7 +20,8 @@ import type {
   CreateDecisionReceiptOptions,
   DecisionResult,
   EvalSuiteVersion,
-  PulseApiOptions
+  PulseApiOptions,
+  PulseTargetPolicy
 } from "../src/index.js";
 
 const suite: EvalSuiteVersion = {
@@ -746,6 +747,171 @@ describe("PULSE HTTP API", () => {
     );
 
     equal(response.status, 422);
+  });
+
+  it("TEST-TARGET-AUTH-001 injects allowlisted credentials and trusted propagation headers for VEIL and RELAY", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-"));
+    const observedHeaders = new Map<string, Headers>();
+    const targetPolicy: PulseTargetPolicy = {
+      allows: () => true,
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(input.toString());
+        observedHeaders.set(url.origin, new Headers(init?.headers));
+        return new Response(JSON.stringify({ message: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      headerTemplates: [
+        { name: "x-tenant-id", value: "{{tenantId}}" },
+        { name: "x-correlation-id", value: "{{correlationId}}" },
+        { name: "idempotency-key", value: "{{idempotencyKey}}" }
+      ],
+      credentialHeaderNames: ["authorization", "x-relay-api-key"],
+      credentialProvider: ({ targetOrigin }) =>
+        targetOrigin === "https://veil.local"
+          ? { headers: { authorization: "Bearer veil-fixture-secret" } }
+          : { headers: { "x-relay-api-key": "relay-fixture-secret" } }
+    };
+    const options = {
+      ...authenticatedOptions,
+      storeDir,
+      targetPolicy
+    };
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "x-correlation-id": "corr_target_auth",
+      "idempotency-key": "idem-auth-suite"
+    };
+
+    const publish = await processPulseHttpRequest(
+      { method: "POST", path: "/v1/suites", headers, body: suite },
+      options
+    );
+    equal(publish.status, 201);
+
+    for (const [baseUrl, idempotencyKey] of [
+      ["https://veil.local", "idem-auth-veil"],
+      ["https://relay.local", "idem-auth-relay"]
+    ] as const) {
+      const response = await processPulseHttpRequest(
+        {
+          method: "POST",
+          path: "/v1/runs",
+          headers: { ...headers, "idempotency-key": idempotencyKey },
+          body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl, timeoutMs: 1000 } }
+        },
+        options
+      );
+      equal(response.status, 201);
+    }
+
+    const veilHeaders = observedHeaders.get("https://veil.local");
+    const relayHeaders = observedHeaders.get("https://relay.local");
+    equal(veilHeaders?.get("authorization"), "Bearer veil-fixture-secret");
+    equal(veilHeaders?.get("x-tenant-id"), "tenant_a");
+    equal(veilHeaders?.get("x-correlation-id"), "corr_target_auth");
+    ok(veilHeaders?.get("idempotency-key")?.startsWith("pulse-"));
+    ok(veilHeaders?.get("idempotency-key") !== "idem-auth-veil");
+    equal(veilHeaders?.get("x-relay-api-key"), null);
+    equal(relayHeaders?.get("authorization"), null);
+    equal(relayHeaders?.get("x-relay-api-key"), "relay-fixture-secret");
+    equal(relayHeaders?.get("x-tenant-id"), "tenant_a");
+    equal(relayHeaders?.get("x-correlation-id"), "corr_target_auth");
+    ok(relayHeaders?.get("idempotency-key")?.startsWith("pulse-"));
+    ok(relayHeaders?.get("idempotency-key") !== "idem-auth-relay");
+
+    const persisted = JSON.stringify(await readStore(join(storeDir, "tenant_a.json")));
+    ok(!persisted.includes("veil-fixture-secret"));
+    ok(!persisted.includes("relay-fixture-secret"));
+    ok(!persisted.includes("test-token-tenant-a"));
+  });
+
+  it("TEST-TARGET-AUTH-002 returns a redacted controlled outcome when credentials are unavailable or invalid", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "pulse-api-"));
+    let targetCalls = 0;
+    const unexpectedTargetFetch: typeof fetch = async () => {
+      targetCalls += 1;
+      return new Response(JSON.stringify({ message: "ok" }));
+    };
+    const headers = {
+      authorization: "Bearer test-token-tenant-a",
+      "x-tenant-id": "tenant_a",
+      "idempotency-key": "idem-credential-suite"
+    };
+    const publish = await processPulseHttpRequest(
+      { method: "POST", path: "/v1/suites", headers, body: suite },
+      { ...authenticatedOptions, storeDir }
+    );
+    equal(publish.status, 201);
+
+    const unavailable = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-credential-unavailable" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "https://veil.local", timeoutMs: 1000 } }
+      },
+      {
+        ...authenticatedOptions,
+        storeDir,
+        targetPolicy: {
+          ...allowAllTargets(unexpectedTargetFetch),
+          credentialProvider: () => undefined,
+          credentialHeaderNames: ["authorization"]
+        }
+      }
+    );
+    equal(unavailable.status, 503);
+    equal((unavailable.body as { error: { code: string } }).error.code, "TARGET_CREDENTIALS_UNAVAILABLE");
+
+    const invalidSecret = "credential-must-not-leak";
+    const invalid = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-credential-invalid" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "https://relay.local", timeoutMs: 1000 } }
+      },
+      {
+        ...authenticatedOptions,
+        storeDir,
+        targetPolicy: {
+          ...allowAllTargets(unexpectedTargetFetch),
+          credentialProvider: () => ({ headers: { "x-tenant-id": invalidSecret } }),
+          credentialHeaderNames: ["x-tenant-id"]
+        }
+      }
+    );
+    equal(invalid.status, 503);
+    equal((invalid.body as { error: { code: string } }).error.code, "TARGET_CREDENTIALS_INVALID");
+    ok(!JSON.stringify(invalid.body).includes(invalidSecret));
+
+    const empty = await processPulseHttpRequest(
+      {
+        method: "POST",
+        path: "/v1/runs",
+        headers: { ...headers, "idempotency-key": "idem-credential-empty" },
+        body: { suiteId: suite.suiteId, suiteVersion: suite.version, target: { baseUrl: "https://relay.local", timeoutMs: 1000 } }
+      },
+      {
+        ...authenticatedOptions,
+        storeDir,
+        targetPolicy: {
+          ...allowAllTargets(unexpectedTargetFetch),
+          credentialProvider: () => ({ headers: {} }),
+          credentialHeaderNames: ["authorization"]
+        }
+      }
+    );
+    equal(empty.status, 503);
+    equal((empty.body as { error: { code: string } }).error.code, "TARGET_CREDENTIALS_INVALID");
+
+    const snapshot = await readStore(join(storeDir, "tenant_a.json"));
+    ok(!JSON.stringify(snapshot).includes(invalidSecret));
+    equal(snapshot.idempotencyRecords.length, 1);
+    equal(targetCalls, 0);
   });
 
   it("TEST-HTTP-001 converts invalid JSON bodies into validation responses", async () => {
