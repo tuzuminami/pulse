@@ -202,6 +202,7 @@ export interface PulseStoreSnapshot {
   readonly suites: readonly EvalSuiteVersion[];
   readonly runs: readonly EvalRun[];
   readonly baselines: readonly Baseline[];
+  readonly budgetEvents: readonly BudgetExceededEvent[];
   readonly auditEvents: readonly AuditEvent[];
   readonly outboxEvents: readonly OutboxEvent[];
   readonly idempotencyRecords: readonly IdempotencyRecord[];
@@ -223,6 +224,11 @@ export interface BudgetExceededEvidence {
   readonly code: string;
   readonly targetHash?: string;
   readonly caseCount?: number;
+}
+
+/** Sanitized, durable evidence for a budget rejection. It never includes target URLs or credentials. */
+export interface BudgetExceededEvent extends BudgetExceededEvidence {
+  readonly budgetEventId: string;
 }
 
 export interface AuditEvent {
@@ -598,6 +604,7 @@ export async function readStore(path: string): Promise<PulseStoreSnapshot> {
       suites: parsed.suites ?? [],
       runs: parsed.runs ?? [],
       baselines: parsed.baselines ?? [],
+      budgetEvents: parsed.budgetEvents ?? [],
       auditEvents: parsed.auditEvents ?? [],
       outboxEvents: parsed.outboxEvents ?? [],
       idempotencyRecords: parsed.idempotencyRecords ?? []
@@ -659,7 +666,19 @@ export async function saveBudgetExceeded(
   assertWriteContext(context);
   requireNonEmpty(evidence.code, "BudgetExceededEvidence.code");
   const snapshot = await readStore(path);
-  await writeStore(path, withEvidence(snapshot, "budget", evidence.code, evidence, context));
+  const budgetEvent: BudgetExceededEvent = {
+    budgetEventId: `budget_${sha256(canonicalJson({
+      tenantId: context.tenantId,
+      correlationId: context.correlationId,
+      evidence,
+      index: snapshot.budgetEvents.length
+    })).slice(0, 24)}`,
+    ...evidence
+  };
+  await writeStore(path, withEvidence({
+    ...snapshot,
+    budgetEvents: [...snapshot.budgetEvents, budgetEvent]
+  }, "budget", budgetEvent.budgetEventId, budgetEvent, context));
 }
 
 export async function saveIdempotencyRecord(
@@ -1070,6 +1089,7 @@ function emptyStore(): PulseStoreSnapshot {
     suites: [],
     runs: [],
     baselines: [],
+    budgetEvents: [],
     auditEvents: [],
     outboxEvents: [],
     idempotencyRecords: []

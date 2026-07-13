@@ -41,6 +41,7 @@ export type {
 
 export type {
   Baseline,
+  BudgetExceededEvent,
   BudgetExceededEvidence,
   AuditEvent,
   CaseOutcome,

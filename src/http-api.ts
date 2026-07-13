@@ -135,6 +135,7 @@ interface EvaluationBudgetState {
   activeRuns: number;
   readonly queued: Array<(slot: EvaluationRunSlot) => void>;
   readonly targetRequestTimes: Map<string, number[]>;
+  cleanupTimer: NodeJS.Timeout | undefined;
 }
 
 interface EvaluationRunSlot {
@@ -264,15 +265,6 @@ async function processAuthenticatedPulseHttpRequest(
           return { suite, body, targetPolicy };
         });
         if ("replay" in prepared) return prepared.replay;
-        const requestHeaders = await resolveTargetRequestHeaders(
-          prepared.targetPolicy,
-          context,
-          prepared.body.target.baseUrl,
-          idempotencyKey
-        );
-        if ("error" in requestHeaders) {
-          return errorResponse(503, requestHeaders.error, context.correlationId);
-        }
         if (!idempotencyKey) {
           return errorResponse(422, "IDEMPOTENCY_KEY_REQUIRED", context.correlationId);
         }
@@ -294,6 +286,15 @@ async function processAuthenticatedPulseHttpRequest(
           );
         }
         try {
+          const requestHeaders = await resolveTargetRequestHeaders(
+            prepared.targetPolicy,
+            context,
+            prepared.body.target.baseUrl,
+            idempotencyKey
+          );
+          if ("error" in requestHeaders) {
+            return errorResponse(503, requestHeaders.error, context.correlationId);
+          }
           const reservationReplay = await withTenantStoreTransaction(storePath, async () => {
             const replay = await existingIdempotencyResponse(storePath, request, context, true);
             if (replay) return replay;
@@ -873,7 +874,8 @@ async function acquireEvaluationRunSlot(
   const state = evaluationBudgetStates.get(stateKey) ?? {
     activeRuns: 0,
     queued: [],
-    targetRequestTimes: new Map<string, number[]>()
+    targetRequestTimes: new Map<string, number[]>(),
+    cleanupTimer: undefined
   };
   evaluationBudgetStates.set(stateKey, state);
 
@@ -928,17 +930,27 @@ function createEvaluationRunSlot(stateKey: string, state: EvaluationBudgetState)
 }
 
 function scheduleBudgetStateCleanup(stateKey: string, state: EvaluationBudgetState): void {
+  if (state.cleanupTimer) return;
   const timer = setTimeout(() => {
+    state.cleanupTimer = undefined;
     const cutoff = Date.now() - TARGET_RATE_WINDOW_MS;
     for (const [targetOrigin, requestTimes] of state.targetRequestTimes) {
       const liveTimes = requestTimes.filter((requestedAt) => requestedAt > cutoff);
       if (liveTimes.length === 0) state.targetRequestTimes.delete(targetOrigin);
       else state.targetRequestTimes.set(targetOrigin, liveTimes);
     }
-    if (state.activeRuns === 0 && state.queued.length === 0 && state.targetRequestTimes.size === 0) {
+    if (
+      evaluationBudgetStates.get(stateKey) === state &&
+      state.activeRuns === 0 &&
+      state.queued.length === 0 &&
+      state.targetRequestTimes.size === 0
+    ) {
       evaluationBudgetStates.delete(stateKey);
+      return;
     }
+    if (evaluationBudgetStates.get(stateKey) === state) scheduleBudgetStateCleanup(stateKey, state);
   }, TARGET_RATE_WINDOW_MS);
+  state.cleanupTimer = timer;
   timer.unref();
 }
 
