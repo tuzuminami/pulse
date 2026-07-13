@@ -96,7 +96,7 @@ Suite definitions are stored as test fixtures. PULSE redacts run traces before p
 
 ## Release Evidence
 
-Published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, verification log, and verifier as GitHub Release assets. The CI copy expires after 90 days; the immutable GitHub Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest.
+The `v1.0.0` release retained only its SBOM and is not a complete release-evidence bundle. From `v1.0.1` onward, published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, verification log, and verifier as GitHub Release assets. The CI copy expires after 90 days; the immutable GitHub Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest. PULSE is not published to the npm registry.
 
 The evaluation bundle is intentionally synthetic: it runs only `examples/suite.public-demo.json` against a deterministic fixture, saves its baseline and comparison result, and records SHA-256 hashes. It proves that the release canary and its declared baseline passed; it does not claim to evaluate a production target or store customer traffic.
 

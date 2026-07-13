@@ -1,6 +1,6 @@
 {
   "name": "@tuzuminami/pulse",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Standalone conversational AI evaluation harness with redacted traces, baselines, and CI-friendly regression checks.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -39,6 +39,7 @@
     "check:veil-contract": "node scripts/check-veil-contract.mjs",
     "check:governance": "node scripts/check-governance.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
+    "check:published-release": "node scripts/verify-published-release.mjs",
     "sbom": "node scripts/generate-sbom.mjs",
     "pack:dry-run": "npm pack --dry-run --cache /tmp/pulse-npm-cache"
   },

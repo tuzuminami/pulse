@@ -7,6 +7,8 @@ on:
       - main
     tags:
       - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -140,3 +142,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/*.tgz release-artifacts/pulse-sbom.cdx.json release-artifacts/pulse-release-evaluation.json release-artifacts/pulse-release-decision.json release-artifacts/verification.log release-artifacts/verify-release-evidence.mjs
+
+  verify-published-release:
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PULSE_RELEASE_TAG: ${{ github.event.release.tag_name }}
+      PULSE_RELEASE_ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Verify public release evidence as a consumer
+        run: node scripts/verify-published-release.mjs

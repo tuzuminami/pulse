@@ -32,7 +32,7 @@ describe("PULSE release evidence", () => {
     await writeFile(join(directory, "verification.log"), "verification fixture\n");
     await execFile(process.execPath, [
       "scripts/generate-release-evidence.mjs",
-      "--release-tag", "v1.0.0",
+      "--release-tag", "v1.0.1",
       "--artifact-dir", directory,
       "--output", output,
       "--pnpm-version", "10-test"
@@ -40,7 +40,7 @@ describe("PULSE release evidence", () => {
 
     const decision = JSON.parse(await readFile(output, "utf8"));
     equal(decision.schemaVersion, "pulse.release-decision.v1");
-    equal(decision.release.tag, "v1.0.0");
+    equal(decision.release.tag, "v1.0.1");
     equal(decision.evaluation.ciExitCode, 0);
     equal(decision.retention.workflowArtifactDays, 90);
     equal(decision.artifacts.length, 4);
@@ -62,7 +62,7 @@ describe("PULSE release evidence", () => {
     await rejects(
       execFile(process.execPath, [
         "scripts/generate-release-evidence.mjs",
-        "--release-tag", "v1.0.0",
+        "--release-tag", "v1.0.1",
         "--artifact-dir", directory,
         "--output", join(directory, "pulse-release-decision.json")
       ], { cwd: process.cwd() })

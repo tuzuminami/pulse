@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Published the complete immutable GitHub Release evidence bundle: package tarball, SBOM, synthetic evaluation, decision manifest, verification log, and verifier.
+- Added no-credential consumer verification of published release assets, manifest hashes, package identity, and public package import.
+- Documented that v1.0.0 retained only its SBOM; GitHub Release evidence is canonical from v1.0.1 onward.
+
 ## 1.0.0
 
 - Established PULSE as a deterministic proof harness for policy regression and release evidence.
