@@ -19,6 +19,25 @@ export {
   verifyHmacSha256
 } from "./pulse-eval.js";
 
+export {
+  adaptVeilDecisionReceipt,
+  compareVeilDecisionReplay,
+  validateVeilDecisionReceipt,
+  veilActionToOutcome,
+  VEIL_DECISION_RECEIPT_VERSION,
+  VeilReceiptError
+} from "./veil-receipt.js";
+
+export type {
+  AdaptedVeilDecisionReceipt,
+  VeilDecisionAction,
+  VeilDecisionOutcome,
+  VeilDecisionReceipt,
+  VeilReplayComparison,
+  VeilReplayMismatchReason,
+  VeilReplayedDecision
+} from "./veil-receipt.js";
+
 export type {
   Baseline,
   AuditEvent,

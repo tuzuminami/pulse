@@ -136,3 +136,49 @@ test("TEST-CLI-003 verifies a signed receipt with an environment-provided key", 
   equal(result.status, 0);
   equal((JSON.parse(result.stdout) as { status: string }).status, "passed");
 });
+
+test("TEST-CLI-004 compares a VEIL receipt without a PULSE HMAC key", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pulse-cli-"));
+  const receiptPath = join(dir, "veil-receipt.json");
+  const decisionPath = join(dir, "veil-decision.json");
+  const receipt = {
+    receiptVersion: "veil-decision-receipt/1.0",
+    decisionId: "decision_cli",
+    tenantId: "tenant_cli",
+    policyId: "policy_cli",
+    policyVersion: "1.0.0",
+    policyHash: "policy-hash-cli",
+    action: "ALLOW",
+    reasonCodes: ["LOW_RISK_ALLOWED"],
+    obligations: ["AUDIT_LOG"],
+    inputHash: "input-hash-cli",
+    evidenceHash: "evidence-hash-cli",
+    correlationId: "corr-cli",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    receiptHash: "89496b20ac96b65b9bb0b32b894ade88e7a92d18a9285fde6ef27e3f39b157d3"
+  };
+  await writeFile(receiptPath, JSON.stringify(receipt), "utf8");
+  await writeFile(
+    decisionPath,
+    JSON.stringify({
+      action: "ALLOW",
+      policyId: "policy_cli",
+      policyVersion: "1.0.0",
+      policyHash: "policy-hash-cli",
+      reasonCodes: ["LOW_RISK_ALLOWED"],
+      obligations: ["AUDIT_LOG"],
+      inputHash: "input-hash-cli",
+      evidenceHash: "evidence-hash-cli"
+    }),
+    "utf8"
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath.pathname, "veil:replay-check", "--receipt", receiptPath, "--decision", decisionPath],
+    { encoding: "utf8", env: { ...process.env, PULSE_RECEIPT_HMAC_KEY: "" } }
+  );
+
+  equal(result.status, 0);
+  equal((JSON.parse(result.stdout) as { status: string }).status, "passed");
+});

@@ -92,8 +92,15 @@ try {
     );
     console.log(JSON.stringify(comparison));
     process.exitCode = comparison.ciExitCode;
+  } else if (command === "veil:replay-check") {
+    const expectedReceipt = await importJson(requireOption(options.receipt, "--receipt"));
+    const replayedDecision = await importJson(requireOption(options.decision, "--decision"));
+    const { compareVeilDecisionReplay } = await import("./veil-receipt.js");
+    const comparison = compareVeilDecisionReplay(expectedReceipt, replayedDecision);
+    console.log(JSON.stringify(comparison));
+    process.exitCode = comparison.ciExitCode;
   } else {
-    throw new Error("Unknown command. Use suite:publish, run, baseline:create, regression:check, or shadow:check.");
+    throw new Error("Unknown command. Use suite:publish, run, baseline:create, regression:check, shadow:check, or veil:replay-check.");
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : "Unknown failure.";
