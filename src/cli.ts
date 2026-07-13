@@ -154,7 +154,8 @@ function writeContext(options: CliOptions, fallbackReasonCode: string): WriteCon
     tenantId: options.tenantId,
     actorId: options.actorId,
     correlationId: options.correlationId,
-    reasonCode: options.reasonCode ?? fallbackReasonCode
+    reasonCode: options.reasonCode ?? fallbackReasonCode,
+    now: () => new Date().toISOString()
   };
 }
 

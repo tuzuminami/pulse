@@ -2,6 +2,9 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+const SAFE_TENANT_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+const ISO_8601_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 export type CaseOutcome = "pass" | "fail" | "inconclusive" | "error";
 export type RunStatus = "passed" | "failed" | "inconclusive";
 export type RegressionStatus = "passed" | "failed";
@@ -207,7 +210,8 @@ export interface WriteContext {
   readonly actorId: string;
   readonly correlationId: string;
   readonly reasonCode: string;
-  readonly now?: () => string;
+  /** A production clock; tests must provide an explicit deterministic clock. */
+  readonly now: () => string;
   readonly idGenerator?: () => string;
 }
 
@@ -588,7 +592,8 @@ export async function writeStore(path: string, snapshot: PulseStoreSnapshot): Pr
   await rename(temporaryPath, path);
 }
 
-export async function saveSuite(path: string, suite: EvalSuiteVersion, context?: WriteContext): Promise<void> {
+export async function saveSuite(path: string, suite: EvalSuiteVersion, context: WriteContext): Promise<void> {
+  assertWriteContext(context);
   validateSuite(suite);
   const snapshot = await readStore(path);
   if (snapshot.suites.some((item) => item.suiteId === suite.suiteId && item.version === suite.version)) {
@@ -600,7 +605,8 @@ export async function saveSuite(path: string, suite: EvalSuiteVersion, context?:
   }, "suite", `${suite.suiteId}@${suite.version}`, suite, context));
 }
 
-export async function saveRun(path: string, run: EvalRun, context?: WriteContext): Promise<void> {
+export async function saveRun(path: string, run: EvalRun, context: WriteContext): Promise<void> {
+  assertWriteContext(context);
   const snapshot = await readStore(path);
   await writeStore(path, withEvidence({
     ...snapshot,
@@ -608,7 +614,8 @@ export async function saveRun(path: string, run: EvalRun, context?: WriteContext
   }, "run", run.runId, run, context));
 }
 
-export async function saveBaseline(path: string, baseline: Baseline, context?: WriteContext): Promise<void> {
+export async function saveBaseline(path: string, baseline: Baseline, context: WriteContext): Promise<void> {
+  assertWriteContext(context);
   const snapshot = await readStore(path);
   await writeStore(path, withEvidence({
     ...snapshot,
@@ -639,8 +646,9 @@ export async function saveResourceWithIdempotency(
   path: string,
   resource: EvalSuiteVersion | EvalRun | Baseline,
   record: IdempotencyRecord,
-  context?: WriteContext
+  context: WriteContext
 ): Promise<void> {
+  assertWriteContext(context);
   const snapshot = await readStore(path);
   let resourceType: AuditEvent["resourceType"];
   let resourceId: string;
@@ -1043,18 +1051,16 @@ function withEvidence(
   resourceType: AuditEvent["resourceType"],
   resourceId: string,
   resource: unknown,
-  context: WriteContext | undefined
+  context: WriteContext
 ): PulseStoreSnapshot {
-  const safeContext = context ?? {
-    tenantId: "tenant_unknown",
-    actorId: "actor_unknown",
-    correlationId: "corr_unknown",
-    reasonCode: "SYSTEM_WRITE"
-  };
-  const occurredAt = safeContext.now?.() ?? new Date(0).toISOString();
+  assertWriteContext(context);
+  const occurredAt = context.now();
+  if (!ISO_8601_UTC_TIMESTAMP.test(occurredAt) || !Number.isFinite(Date.parse(occurredAt))) {
+    throw new PulseEvalError("VALIDATION_FAILED", "WriteContext.now must return an ISO-8601 timestamp.");
+  }
   const payloadHash = sha256(canonicalJson(resource));
-  const base = `${safeContext.tenantId}:${resourceType}:${resourceId}:${payloadHash}:${snapshot.auditEvents.length}`;
-  const eventId = safeContext.idGenerator?.() ?? `evt_${sha256(base).slice(0, 24)}`;
+  const base = `${context.tenantId}:${resourceType}:${resourceId}:${payloadHash}:${snapshot.auditEvents.length}`;
+  const eventId = context.idGenerator?.() ?? `evt_${sha256(base).slice(0, 24)}`;
 
   return {
     ...snapshot,
@@ -1064,12 +1070,12 @@ function withEvidence(
         eventId: `aud_${eventId}`,
         eventType: "pulse.audit.v1",
         occurredAt,
-        tenantId: safeContext.tenantId,
-        actorId: safeContext.actorId,
-        correlationId: safeContext.correlationId,
+        tenantId: context.tenantId,
+        actorId: context.actorId,
+        correlationId: context.correlationId,
         resourceType,
         resourceId,
-        reasonCode: safeContext.reasonCode,
+        reasonCode: context.reasonCode,
         afterHash: payloadHash
       }
     ],
@@ -1079,14 +1085,29 @@ function withEvidence(
         eventId: `out_${eventId}`,
         eventType: "pulse.resource.changed.v1",
         occurredAt,
-        tenantId: safeContext.tenantId,
-        correlationId: safeContext.correlationId,
+        tenantId: context.tenantId,
+        correlationId: context.correlationId,
         resourceType,
         resourceId,
         payloadHash
       }
     ]
   };
+}
+
+function assertWriteContext(context: WriteContext | undefined): asserts context is WriteContext {
+  if (!context || typeof context.now !== "function") {
+    throw new PulseEvalError("VALIDATION_FAILED", "WriteContext with a production clock is required for persisted mutations.");
+  }
+  requireNonEmpty(context.tenantId, "WriteContext.tenantId");
+  if (!SAFE_TENANT_ID.test(context.tenantId)) {
+    throw new PulseEvalError("VALIDATION_FAILED", "WriteContext.tenantId must be a lowercase ASCII tenant identifier.");
+  }
+  requireNonEmpty(context.actorId, "WriteContext.actorId");
+  requireNonEmpty(context.correlationId, "WriteContext.correlationId");
+  if (!/^[A-Z][A-Z0-9_]{2,63}$/.test(context.reasonCode)) {
+    throw new PulseEvalError("VALIDATION_FAILED", "WriteContext.reasonCode must be an uppercase audit reason code.");
+  }
 }
 
 function requireNonEmpty(value: string, field: string): void {

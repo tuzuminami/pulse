@@ -16,7 +16,7 @@ PULSE is a self-hostable evaluation harness for conversational AI. It runs versi
 - Deterministic shadow replay comparison with CI-friendly mismatch reason codes.
 - Tenant-scoped HTTP storage paths, caller-supplied principal checks, and fail-closed request validation.
 - Required idempotency keys for state-changing HTTP endpoints.
-- Append-only audit and outbox events for important persisted changes.
+- Required attributable write contexts and append-only audit/outbox events for persisted changes.
 - Public boundary guard to prevent accidental release of local-only operator material.
 
 ## Non-Goals
@@ -66,6 +66,8 @@ import {
   runEvaluationSuite
 } from "@tuzuminami/pulse";
 ```
+
+Library persistence through `saveSuite`, `saveRun`, `saveBaseline`, and `saveResourceWithIdempotency` requires a validated `WriteContext`. Supply a verified lowercase tenant ID, actor ID, correlation ID, uppercase reason code, and a real UTC ISO-8601 clock. PULSE rejects missing or malformed context before it writes a resource, audit event, or outbox event. Tests should use an explicit deterministic clock rather than an unknown audit subject.
 
 ## API Contract
 
