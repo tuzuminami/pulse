@@ -94,6 +94,19 @@ Use synthetic fixtures. Do not put secrets, production conversation logs, privat
 
 Suite definitions are stored as test fixtures. PULSE redacts run traces before persistence, but it does not make unsafe suite inputs safe after the fact.
 
+## Release Evidence
+
+Published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, and verification log as GitHub Release assets. The CI copy expires after 90 days; the Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest.
+
+The evaluation bundle is intentionally synthetic: it runs only `examples/suite.public-demo.json` against a deterministic fixture, saves its baseline and comparison result, and records SHA-256 hashes. It proves that the release canary and its declared baseline passed; it does not claim to evaluate a production target or store customer traffic.
+
+```bash
+gh release download v<version> --repo tuzuminami/pulse --pattern 'pulse-release-*'
+gh attestation verify pulse-release-decision.json --repo tuzuminami/pulse
+```
+
+Changes to public baselines, fixtures, or evaluators need an issue or pull request that explains the expected decision change and rollback path. A baseline is not refreshed merely to hide a failure.
+
 ## Development
 
 ```bash

@@ -76,7 +76,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify release source
-        run: pnpm run check
+        run: |
+          mkdir -p release-artifacts
+          set -o pipefail
+          pnpm run check | tee release-artifacts/verification.log
+          pnpm run check:veil-contract | tee -a release-artifacts/verification.log
 
       - name: Build release tarball
         run: mkdir -p release-artifacts && npm pack --pack-destination release-artifacts --json
@@ -90,12 +94,19 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: node .release-evidence-tools/scripts/generate-sbom.mjs
 
+      - name: Generate synthetic release evaluation
+        run: node .release-evidence-tools/scripts/generate-release-evaluation.mjs --release-source "$GITHUB_WORKSPACE"
+
+      - name: Generate release decision manifest
+        run: node .release-evidence-tools/scripts/generate-release-evidence.mjs --release-source "$GITHUB_WORKSPACE" --release-tag "${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}" --pnpm-version "$(pnpm --version)"
+
       - name: Upload release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pulse-release-evidence-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
           path: release-artifacts/
           if-no-files-found: error
+          retention-days: 90
 
       - name: Attest release package provenance
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
@@ -110,7 +121,13 @@ jobs:
           sbom-path: release-artifacts/pulse-sbom.cdx.json
           create-storage-record: false
 
+      - name: Attest release decision manifest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release-artifacts/pulse-release-decision.json
+          create-storage-record: false
+
       - name: Attach SBOM to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}" release-artifacts/pulse-sbom.cdx.json --clobber
+        run: gh release upload "${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}" release-artifacts/*.tgz release-artifacts/pulse-sbom.cdx.json release-artifacts/pulse-release-evaluation.json release-artifacts/pulse-release-decision.json release-artifacts/verification.log --clobber
