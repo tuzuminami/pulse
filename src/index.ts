@@ -9,6 +9,7 @@ export {
   registerDeterministicEvaluator,
   runEvaluationSuite,
   saveBaseline,
+  saveBudgetExceeded,
   saveIdempotencyRecord,
   saveResourceWithIdempotency,
   saveRun,
@@ -40,6 +41,8 @@ export type {
 
 export type {
   Baseline,
+  BudgetExceededEvent,
+  BudgetExceededEvidence,
   AuditEvent,
   CaseOutcome,
   CaseResult,
@@ -62,6 +65,7 @@ export type {
   HmacSha256Key,
   OutboxEvent,
   PulseStoreSnapshot,
+  PersistedResourceType,
   WriteContext,
   RunMetrics,
   RunOptions,
@@ -77,6 +81,7 @@ export { createPulseApiServer, handlePulseRequest, processPulseHttpRequest } fro
 
 export type {
   PulseApiOptions,
+  PulseEvaluationBudget,
   PulseHttpRequest,
   PulseHttpResponse,
   PulseTargetCredentialProvider,

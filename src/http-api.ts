@@ -10,6 +10,7 @@ import {
   PulseEvalError,
   readStore,
   runEvaluationSuite,
+  saveBudgetExceeded,
   saveIdempotencyRecord,
   saveResourceWithIdempotency,
   validateTarget
@@ -29,6 +30,7 @@ export interface PulseApiOptions {
   readonly targetPolicy?: PulseTargetPolicy;
   readonly authenticate: PulseAuthenticator;
   readonly receiptKeyResolver?: DecisionReceiptKeyResolver;
+  readonly evaluationBudget?: PulseEvaluationBudget;
 }
 
 export interface PulsePrincipal {
@@ -56,6 +58,16 @@ export interface PulseTargetPolicy {
   readonly credentialProvider?: PulseTargetCredentialProvider;
   /** Case-insensitive allowlist for header names returned by credentialProvider. */
   readonly credentialHeaderNames?: readonly string[];
+}
+
+/** Host-controlled capacity limits for authenticated HTTP evaluation runs. */
+export interface PulseEvaluationBudget {
+  readonly maxCasesPerSuite?: number;
+  readonly maxTargetTimeoutMs?: number;
+  readonly maxRunDurationMs?: number;
+  readonly maxConcurrentRunsPerTenant?: number;
+  readonly maxQueuedRunsPerTenant?: number;
+  readonly maxRunsPerTargetPerMinute?: number;
 }
 
 export interface PulseTargetCredentialRequest {
@@ -98,8 +110,37 @@ export interface PulseHttpResponse {
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const RUN_LEASE_MS = 60_000;
+const TARGET_RATE_WINDOW_MS = 60_000;
+const DEFAULT_EVALUATION_BUDGET: Required<PulseEvaluationBudget> = {
+  maxCasesPerSuite: 25,
+  maxTargetTimeoutMs: 10_000,
+  maxRunDurationMs: 60_000,
+  maxConcurrentRunsPerTenant: 2,
+  maxQueuedRunsPerTenant: 4,
+  maxRunsPerTargetPerMinute: 30
+};
 const tenantStoreLockTails = new Map<string, Promise<void>>();
 const runExecutionLockTails = new Map<string, Promise<void>>();
+const evaluationBudgetStates = new Map<string, EvaluationBudgetState>();
+
+type BudgetRejectionCode =
+  | "SUITE_CASE_LIMIT_EXCEEDED"
+  | "TARGET_TIMEOUT_LIMIT_EXCEEDED"
+  | "RUN_DEADLINE_LIMIT_EXCEEDED"
+  | "TENANT_CONCURRENCY_LIMIT_EXCEEDED"
+  | "TENANT_QUEUE_LIMIT_EXCEEDED"
+  | "TARGET_RATE_LIMIT_EXCEEDED";
+
+interface EvaluationBudgetState {
+  activeRuns: number;
+  readonly queued: Array<(slot: EvaluationRunSlot) => void>;
+  readonly targetRequestTimes: Map<string, number[]>;
+  cleanupTimer: NodeJS.Timeout | undefined;
+}
+
+interface EvaluationRunSlot {
+  readonly release: () => void;
+}
 
 export function createPulseApiServer(options: PulseApiOptions): Server {
   return createServer((request, response) => {
@@ -162,6 +203,7 @@ async function processAuthenticatedPulseHttpRequest(
 
   try {
     const storePath = tenantStorePath(options.storeDir, context.tenantId);
+    const evaluationBudget = resolveEvaluationBudget(options.evaluationBudget);
     const requiresIdempotency = isStateChangingRequest(request);
     const idempotencyKey = requiresIdempotency ? request.headers["idempotency-key"] : undefined;
     if (requiresIdempotency && !idempotencyKey) {
@@ -173,6 +215,10 @@ async function processAuthenticatedPulseHttpRequest(
         const replay = await existingIdempotencyResponse(storePath, request, context);
         if (replay) return replay;
         const suite = parseSuiteBody(request.body);
+        const budgetRejection = suiteBudgetRejection(suite, evaluationBudget);
+        if (budgetRejection) {
+          return await budgetExceededResponse(storePath, context, budgetRejection, suite.cases.length);
+        }
         const result = dataResponse(201, { suiteId: suite.suiteId, version: suite.version }, context);
         await saveResourceWithIdempotency(storePath, suite, completedIdempotencyRecord(request, result), writeContext(context, "SUITE_PUBLISHED"));
         return result;
@@ -202,47 +248,91 @@ async function processAuthenticatedPulseHttpRequest(
           validateTarget(body.target);
           const suite = (await readStore(storePath)).suites.find((item) => item.suiteId === body.suiteId && item.version === body.suiteVersion);
           if (!suite) return { replay: errorResponse(422, "VALIDATION_FAILED", context.correlationId) };
+          const budgetRejection = runBudgetRejection(suite, body.target, evaluationBudget);
+          if (budgetRejection) {
+            return {
+              replay: await budgetExceededResponse(
+                storePath,
+                context,
+                budgetRejection,
+                suite.cases.length,
+                body.target.baseUrl
+              )
+            };
+          }
           const targetPolicy = resolveTargetPolicy(body.target.baseUrl, context, options);
           if (!targetPolicy) return { replay: errorResponse(403, "TARGET_NOT_ALLOWED", context.correlationId) };
           return { suite, body, targetPolicy };
         });
         if ("replay" in prepared) return prepared.replay;
-        const requestHeaders = await resolveTargetRequestHeaders(
-          prepared.targetPolicy,
-          context,
-          prepared.body.target.baseUrl,
-          idempotencyKey
-        );
-        if ("error" in requestHeaders) {
-          return errorResponse(503, requestHeaders.error, context.correlationId);
-        }
         if (!idempotencyKey) {
           return errorResponse(422, "IDEMPOTENCY_KEY_REQUIRED", context.correlationId);
         }
-        const reservationReplay = await withTenantStoreTransaction(storePath, async () => {
-          const replay = await existingIdempotencyResponse(storePath, request, context, true);
-          if (replay) return replay;
-          await saveIdempotencyRecord(storePath, pendingIdempotencyRecord(request));
-          return undefined;
-        });
-        if (reservationReplay) return reservationReplay;
-        const run = await runEvaluationSuite({
-          suite: prepared.suite,
-          target: prepared.body.target,
-          correlationId: context.correlationId,
-          requestHeaders: requestHeaders.headers,
-          requestHeadersForCase: (caseId) =>
-            resolveHeaderTemplates(
-              prepared.targetPolicy.headerTemplates ?? [],
+        const slot = await acquireEvaluationRunSlot(
+          options.storeDir,
+          context.tenantId,
+          prepared.body.target.baseUrl,
+          evaluationBudget
+        );
+        if ("code" in slot) {
+          return await withTenantStoreTransaction(storePath, () =>
+            budgetExceededResponse(
+              storePath,
               context,
-              idempotencyKey,
-              caseId
-            ) ?? {},
-          fetchImpl: prepared.targetPolicy.fetch
-        });
-        const result = dataResponse(201, run, context);
-        await withTenantStoreTransaction(storePath, () => saveResourceWithIdempotency(storePath, run, completedIdempotencyRecord(request, result), writeContext(context, "RUN_COMPLETED")));
-        return result;
+              slot.code,
+              prepared.suite.cases.length,
+              prepared.body.target.baseUrl
+            )
+          );
+        }
+        try {
+          const requestHeaders = await resolveTargetRequestHeaders(
+            prepared.targetPolicy,
+            context,
+            prepared.body.target.baseUrl,
+            idempotencyKey
+          );
+          if ("error" in requestHeaders) {
+            return errorResponse(503, requestHeaders.error, context.correlationId);
+          }
+          const reservationReplay = await withTenantStoreTransaction(storePath, async () => {
+            const replay = await existingIdempotencyResponse(storePath, request, context, true);
+            if (replay) return replay;
+            await saveIdempotencyRecord(storePath, pendingIdempotencyRecord(request));
+            return undefined;
+          });
+          if (reservationReplay) return reservationReplay;
+          const run = await runEvaluationSuite({
+            suite: prepared.suite,
+            target: prepared.body.target,
+            correlationId: context.correlationId,
+            requestHeaders: requestHeaders.headers,
+            requestHeadersForCase: (caseId) =>
+              resolveHeaderTemplates(
+                prepared.targetPolicy.headerTemplates ?? [],
+                context,
+                idempotencyKey,
+                caseId
+              ) ?? {},
+            fetchImpl: prepared.targetPolicy.fetch,
+            deadlineMs: evaluationBudget.maxRunDurationMs
+          });
+          const result = dataResponse(201, run, context);
+          const reasonCode = run.caseResults.some((resultCase) => resultCase.reasonCode === "RUN_DEADLINE_EXCEEDED")
+            ? "EVALUATION_BUDGET_EXCEEDED"
+            : "RUN_COMPLETED";
+          await withTenantStoreTransaction(storePath, () =>
+            saveResourceWithIdempotency(
+              storePath,
+              run,
+              completedIdempotencyRecord(request, result),
+              writeContext(context, reasonCode)
+            )
+          );
+          return result;
+        } finally {
+          slot.release();
+        }
       });
     }
 
@@ -713,6 +803,155 @@ function deriveTargetIdempotencyKey(tenantId: string, operationIdempotencyKey: s
 
 function normalizeCorrelationId(value: string | undefined): string {
   return value !== undefined && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : "corr_generated";
+}
+
+function resolveEvaluationBudget(input: PulseEvaluationBudget | undefined): Required<PulseEvaluationBudget> {
+  const budget = { ...DEFAULT_EVALUATION_BUDGET, ...input };
+  for (const [field, value] of Object.entries(budget)) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new PulseEvalError("VALIDATION_FAILED", `evaluationBudget.${field} must be a non-negative integer.`);
+    }
+  }
+  if (
+    budget.maxCasesPerSuite < 1 ||
+    budget.maxTargetTimeoutMs < 1 ||
+    budget.maxRunDurationMs < 1 ||
+    budget.maxConcurrentRunsPerTenant < 1 ||
+    budget.maxRunsPerTargetPerMinute < 1
+  ) {
+    throw new PulseEvalError("VALIDATION_FAILED", "evaluationBudget limits must be positive except maxQueuedRunsPerTenant.");
+  }
+  return budget;
+}
+
+function suiteBudgetRejection(
+  suite: EvalSuiteVersion,
+  budget: Required<PulseEvaluationBudget>
+): BudgetRejectionCode | undefined {
+  return suite.cases.length > budget.maxCasesPerSuite ? "SUITE_CASE_LIMIT_EXCEEDED" : undefined;
+}
+
+function runBudgetRejection(
+  suite: EvalSuiteVersion,
+  target: { readonly timeoutMs: number },
+  budget: Required<PulseEvaluationBudget>
+): BudgetRejectionCode | undefined {
+  if (suite.cases.length > budget.maxCasesPerSuite) return "SUITE_CASE_LIMIT_EXCEEDED";
+  if (target.timeoutMs > budget.maxTargetTimeoutMs) return "TARGET_TIMEOUT_LIMIT_EXCEEDED";
+  return suite.cases.length * target.timeoutMs > budget.maxRunDurationMs
+    ? "RUN_DEADLINE_LIMIT_EXCEEDED"
+    : undefined;
+}
+
+async function budgetExceededResponse(
+  storePath: string,
+  context: RequestContext,
+  code: BudgetRejectionCode,
+  caseCount: number | undefined,
+  targetBaseUrl?: string
+): Promise<PulseHttpResponse> {
+  await saveBudgetExceeded(
+    storePath,
+    {
+      code,
+      ...(caseCount === undefined ? {} : { caseCount }),
+      ...(targetBaseUrl === undefined
+        ? {}
+        : { targetHash: createHash("sha256").update(new URL(targetBaseUrl).origin, "utf8").digest("hex") })
+    },
+    writeContext(context, "EVALUATION_BUDGET_EXCEEDED")
+  );
+  return errorResponse(429, "EVALUATION_BUDGET_EXCEEDED", context.correlationId);
+}
+
+async function acquireEvaluationRunSlot(
+  storeDir: string,
+  tenantId: string,
+  targetBaseUrl: string,
+  budget: Required<PulseEvaluationBudget>
+): Promise<EvaluationRunSlot | { readonly code: BudgetRejectionCode }> {
+  const stateKey = `${storeDir}\u0000${tenantId}`;
+  const state = evaluationBudgetStates.get(stateKey) ?? {
+    activeRuns: 0,
+    queued: [],
+    targetRequestTimes: new Map<string, number[]>(),
+    cleanupTimer: undefined
+  };
+  evaluationBudgetStates.set(stateKey, state);
+
+  const targetOrigin = new URL(targetBaseUrl).origin;
+  const now = Date.now();
+  const requestTimes = (state.targetRequestTimes.get(targetOrigin) ?? []).filter(
+    (requestedAt) => requestedAt > now - TARGET_RATE_WINDOW_MS
+  );
+  if (requestTimes.length >= budget.maxRunsPerTargetPerMinute) {
+    state.targetRequestTimes.set(targetOrigin, requestTimes);
+    scheduleBudgetStateCleanup(stateKey, state);
+    return { code: "TARGET_RATE_LIMIT_EXCEEDED" };
+  }
+
+  if (state.activeRuns >= budget.maxConcurrentRunsPerTenant && state.queued.length >= budget.maxQueuedRunsPerTenant) {
+    scheduleBudgetStateCleanup(stateKey, state);
+    return {
+      code:
+        budget.maxQueuedRunsPerTenant === 0
+          ? "TENANT_CONCURRENCY_LIMIT_EXCEEDED"
+          : "TENANT_QUEUE_LIMIT_EXCEEDED"
+    };
+  }
+
+  requestTimes.push(now);
+  state.targetRequestTimes.set(targetOrigin, requestTimes);
+  if (state.activeRuns < budget.maxConcurrentRunsPerTenant && state.queued.length === 0) {
+    state.activeRuns += 1;
+    return createEvaluationRunSlot(stateKey, state);
+  }
+
+  return await new Promise<EvaluationRunSlot>((resolve) => {
+    state.queued.push(resolve);
+  });
+}
+
+function createEvaluationRunSlot(stateKey: string, state: EvaluationBudgetState): EvaluationRunSlot {
+  let released = false;
+  return {
+    release: () => {
+      if (released) return;
+      released = true;
+      state.activeRuns -= 1;
+      const next = state.queued.shift();
+      if (next) {
+        state.activeRuns += 1;
+        next(createEvaluationRunSlot(stateKey, state));
+      }
+      scheduleBudgetStateCleanup(stateKey, state);
+    }
+  };
+}
+
+function scheduleBudgetStateCleanup(stateKey: string, state: EvaluationBudgetState): void {
+  if (state.cleanupTimer) return;
+  const timer = setTimeout(() => {
+    state.cleanupTimer = undefined;
+    const cutoff = Date.now() - TARGET_RATE_WINDOW_MS;
+    for (const [targetOrigin, requestTimes] of state.targetRequestTimes) {
+      const liveTimes = requestTimes.filter((requestedAt) => requestedAt > cutoff);
+      if (liveTimes.length === 0) state.targetRequestTimes.delete(targetOrigin);
+      else state.targetRequestTimes.set(targetOrigin, liveTimes);
+    }
+    if (
+      evaluationBudgetStates.get(stateKey) === state &&
+      state.activeRuns === 0 &&
+      state.queued.length === 0 &&
+      state.targetRequestTimes.size === 0
+    ) {
+      evaluationBudgetStates.delete(stateKey);
+      return;
+    }
+    if (evaluationBudgetStates.get(stateKey) === state) scheduleBudgetStateCleanup(stateKey, state);
+  }, TARGET_RATE_WINDOW_MS);
+  state.cleanupTimer = timer;
+  timer.unref();
 }
 
 async function acquireTenantStoreLock(storePath: string): Promise<() => void> {

@@ -440,6 +440,44 @@ describe("PULSE evaluation MVP", () => {
     equal(run.caseResults[0]?.reasonCode, "TARGET_TIMEOUT");
   });
 
+  it("TEST-RUN-BUDGET-001 stops remaining cases after the total run deadline", async () => {
+    let clock = 0;
+    const deadlineSuite: EvalSuiteVersion = {
+      ...suite,
+      cases: [
+        suite.cases[0]!,
+        { ...suite.cases[0]!, id: "case-after-deadline" }
+      ]
+    };
+
+    const run = await runEvaluationSuite({
+      suite: deadlineSuite,
+      target: { baseUrl, timeoutMs: 1000 },
+      deadlineMs: 3,
+      now: () => clock++,
+      fetchImpl
+    });
+
+    equal(run.caseResults[0]?.outcome, "pass");
+    equal(run.caseResults[1]?.reasonCode, "RUN_DEADLINE_EXCEEDED");
+    equal(run.status, "inconclusive");
+  });
+
+  it("TEST-RUN-BUDGET-002 attributes an in-flight timeout to the total run deadline", async () => {
+    const run = await runEvaluationSuite({
+      suite,
+      target: { baseUrl, timeoutMs: 1_000 },
+      deadlineMs: 20,
+      fetchImpl: async (_input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        })
+    });
+
+    equal(run.caseResults[0]?.reasonCode, "RUN_DEADLINE_EXCEEDED");
+    equal(run.status, "inconclusive");
+  });
+
   it("TEST-AUDIT-001 persists suites, runs, and baselines without raw response text", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pulse-store-"));
     const storePath = join(dir, "store.json");
