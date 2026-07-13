@@ -25,6 +25,11 @@ try {
   verify(assets, "true", false);
   verify(assets, "false", true);
   verify([...assets, { ...asset(names[0]), name: "unexpected-private-notes.zip" }], "true", true);
+  const decisionPath = join(directory, "pulse-release-decision.json");
+  const decision = JSON.parse(readFileSync(decisionPath, "utf8"));
+  decision.release.sourceCommit = "0".repeat(40);
+  writeFileSync(decisionPath, `${JSON.stringify(decision, null, 2)}\n`);
+  verify(names.map((name) => asset(name)), "true", true);
   console.log(`published-release-fixture: verified ${tag}`);
 } finally {
   rmSync(directory, { recursive: true, force: true });
