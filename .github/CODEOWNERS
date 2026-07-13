@@ -1,0 +1,14 @@
+# Default ownership for the public PULSE repository.
+* @tuzuminami
+
+# Runtime, tenant boundaries, and VEIL compatibility.
+/src/ @tuzuminami
+/openapi/ @tuzuminami
+/tests/ @tuzuminami
+
+# Release, workflow, and public-boundary controls.
+/.github/ @tuzuminami
+/scripts/ @tuzuminami
+/package.json @tuzuminami
+/pnpm-lock.yaml @tuzuminami
+/SECURITY.md @tuzuminami

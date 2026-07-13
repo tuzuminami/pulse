@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a bounded PULSE capability with compatibility and operational context.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and intended user
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed public contract
+      description: Include API, CLI, package, and VEIL receipt compatibility implications.
+    validations:
+      required: true
+  - type: checkboxes
+    id: review
+    attributes:
+      label: Required review context
+      options:
+        - label: Tenant, security, idempotency, audit, and redaction impacts are described.
+        - label: Migration, rollout, rollback, and operational impacts are described.
