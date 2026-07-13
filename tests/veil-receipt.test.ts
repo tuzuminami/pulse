@@ -50,7 +50,6 @@ describe("VEIL v1 decision receipt consumer", () => {
       inputHash: "input-hash-public-fixture",
       evidenceHash: "evidence-hash-public-fixture",
       tenantId: "tenant_public_fixture",
-      requestId: "req-public-fixture",
       correlationId: "corr-public-fixture"
     } as const;
 
@@ -70,7 +69,6 @@ describe("VEIL v1 decision receipt consumer", () => {
       obligations: [],
       reasonCodes: ["POLICY_DENIED"],
       tenantId: "other-tenant",
-      requestId: "other-request",
       correlationId: "other-correlation"
     });
     equal(mismatch.status, "failed");
@@ -86,7 +84,6 @@ describe("VEIL v1 decision receipt consumer", () => {
       "OBLIGATIONS_MISMATCH",
       "REASON_CODES_MISMATCH",
       "TENANT_ID_MISMATCH",
-      "REQUEST_ID_MISMATCH",
       "CORRELATION_ID_MISMATCH"
     ]);
   });

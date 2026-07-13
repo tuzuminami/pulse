@@ -54,7 +54,7 @@ node dist/src/cli.js veil:replay-check --receipt veil-receipt.json --decision ve
 
 VEIL receipt hashes are deterministic integrity checks, not caller authentication. Use this replay path for regression evidence only; do not make authorization decisions from an untrusted receipt file.
 
-The normal `pnpm run check` is offline and repeatable. CI pins `pnpm run check:veil-contract` to the VEIL `v1.0.0` receipt schema, then runs the same check against VEIL `main` as an explicit compatibility monitor. Both compare parsed JSON with `tests/fixtures/veil-decision-receipt-v1.schema.json`; any upstream change fails the monitor. Override the URL with `VEIL_RECEIPT_SCHEMA_URL` when validating another public schema.
+The normal `pnpm run check` is offline and repeatable. CI pins `pnpm run check:veil-contract` to the VEIL `v1.0.1` receipt schema, then runs the same check against VEIL `main` as an explicit compatibility monitor. Both compare parsed JSON with `tests/fixtures/veil-decision-receipt-v1.schema.json`; any upstream change fails the monitor. Override the URL with `VEIL_RECEIPT_SCHEMA_URL` when validating another public schema.
 
 ## SDK
 
