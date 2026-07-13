@@ -11,7 +11,7 @@ PULSE is a self-hostable OSS evaluation harness. Do not submit production secret
 
 ## Reporting A Vulnerability
 
-Open a private security advisory on GitHub when available, or contact the maintainer through the repository security channel. Include a minimal synthetic reproduction and avoid real user data.
+Use [GitHub Private Vulnerability Reporting](https://github.com/tuzuminami/pulse/security/advisories/new) for every suspected vulnerability. Do not open a public issue first. Include a minimal synthetic reproduction and avoid real user data. The maintainer acknowledges reports privately, coordinates a fix, and publishes an advisory only after a remediation is available.
 
 ## Data Handling
 
