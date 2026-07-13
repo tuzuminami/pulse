@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing draft release tag to build and attest before publication.
+        description: Existing pushed release tag with a matching draft release to build and attest before publication.
         required: true
         type: string
 
@@ -65,6 +65,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true"
+
+      - name: Confirm release tag was pushed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --silent "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG"
 
       - name: Checkout release tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

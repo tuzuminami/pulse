@@ -109,7 +109,7 @@ gh attestation verify <downloaded-release-artifact-directory>/pulse-release-deci
 node <downloaded-release-artifact-directory>/verify-release-evidence.mjs --artifact-dir <downloaded-release-artifact-directory>
 ```
 
-Release evidence is built only for an existing draft release. After the workflow passes, publish that draft with GitHub immutable releases enabled; do not upload or replace assets after publication.
+Release evidence is built only for an existing pushed `v<package-version>` tag and matching draft release. Create and push the tag first, then create the draft with `gh release create v<version> --verify-tag --draft`; a draft release alone does not create a Git tag that CI can verify. After the workflow passes, publish that draft with GitHub immutable releases enabled; do not upload or replace assets after publication.
 
 Changes to public baselines, fixtures, or evaluators need an issue or pull request that explains the expected decision change and rollback path. A baseline is not refreshed merely to hide a failure.
 
