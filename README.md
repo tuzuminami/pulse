@@ -54,7 +54,7 @@ node dist/src/cli.js veil:replay-check --receipt veil-receipt.json --decision ve
 
 VEIL receipt hashes are deterministic integrity checks, not caller authentication. Use this replay path for regression evidence only; do not make authorization decisions from an untrusted receipt file.
 
-The normal `pnpm run check` is offline and repeatable. CI pins `pnpm run check:veil-contract` to the VEIL `v1.0.0` receipt schema, then runs the same check against VEIL `main` as an explicit compatibility monitor. Both compare parsed JSON with `tests/fixtures/veil-decision-receipt-v1.schema.json`; any upstream change fails the monitor. Override the URL with `VEIL_RECEIPT_SCHEMA_URL` when validating another public schema.
+The normal `pnpm run check` is offline and repeatable. CI pins `pnpm run check:veil-contract` to the VEIL `v1.0.1` receipt schema, then runs the same check against VEIL `main` as an explicit compatibility monitor. Both compare parsed JSON with `tests/fixtures/veil-decision-receipt-v1.schema.json`; any upstream change fails the monitor. Override the URL with `VEIL_RECEIPT_SCHEMA_URL` when validating another public schema.
 
 ## SDK
 
@@ -96,7 +96,7 @@ Suite definitions are stored as test fixtures. PULSE redacts run traces before p
 
 ## Release Evidence
 
-Published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, verification log, and verifier as GitHub Release assets. The CI copy expires after 90 days; the immutable GitHub Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest.
+The `v1.0.0` release retained only its SBOM and is not a complete release-evidence bundle. From `v1.0.1` onward, published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, verification log, and verifier as GitHub Release assets. The CI copy expires after 90 days; the immutable GitHub Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest. PULSE is not published to the npm registry.
 
 The evaluation bundle is intentionally synthetic: it runs only `examples/suite.public-demo.json` against a deterministic fixture, saves its baseline and comparison result, and records SHA-256 hashes. It proves that the release canary and its declared baseline passed; it does not claim to evaluate a production target or store customer traffic.
 

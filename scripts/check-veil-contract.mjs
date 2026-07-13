@@ -3,7 +3,7 @@ import { checkVeilReceiptContract as runCheck } from "../dist/src/veil-contract.
 
 export const VEIL_RECEIPT_SCHEMA_URL =
   process.env.VEIL_RECEIPT_SCHEMA_URL ??
-  "https://raw.githubusercontent.com/tuzuminami/veil/v1.0.0/schemas/decision-receipt.schema.json";
+  "https://raw.githubusercontent.com/tuzuminami/veil/v1.0.1/schemas/decision-receipt.schema.json";
 export const VEIL_RECEIPT_SCHEMA_FIXTURE = new URL(
   "../tests/fixtures/veil-decision-receipt-v1.schema.json",
   import.meta.url

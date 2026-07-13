@@ -31,6 +31,7 @@ export interface VeilDecisionReceipt {
   readonly matchedRuleId?: string;
   readonly inputHash: string;
   readonly evidenceHash: string;
+  readonly requestId?: string;
   readonly correlationId: string;
   readonly createdAt: string;
   readonly receiptHash: string;
@@ -119,7 +120,7 @@ export function validateVeilDecisionReceipt(receipt: unknown): asserts receipt i
   if (!isRecord(receipt)) throw invalidReceipt("VEIL decision receipt must be an object.");
   requireExactKeys(
     receipt,
-    ["receiptVersion", "decisionId", "tenantId", "policyId", "policyVersion", "policyHash", "action", "reasonCodes", "obligations", "matchedRuleId", "inputHash", "evidenceHash", "correlationId", "createdAt", "receiptHash"],
+    ["receiptVersion", "decisionId", "tenantId", "policyId", "policyVersion", "policyHash", "action", "reasonCodes", "obligations", "matchedRuleId", "inputHash", "evidenceHash", "requestId", "correlationId", "createdAt", "receiptHash"],
     "VEIL decision receipt"
   );
   if (receipt.receiptVersion !== VEIL_DECISION_RECEIPT_VERSION) {
@@ -134,6 +135,9 @@ export function validateVeilDecisionReceipt(receipt: unknown): asserts receipt i
   }
   if (receipt.matchedRuleId !== undefined && !isNonEmptyString(receipt.matchedRuleId)) {
     throw invalidReceipt("VEIL decision receipt matchedRuleId must be a non-empty string when present.");
+  }
+  if (receipt.requestId !== undefined && !isNonEmptyString(receipt.requestId)) {
+    throw invalidReceipt("VEIL decision receipt requestId must be a non-empty string when present.");
   }
   const { receiptHash, ...contents } = receipt;
   if (receiptHash !== sha256(contents)) {
