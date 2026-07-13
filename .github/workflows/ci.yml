@@ -7,12 +7,10 @@ on:
       - main
     tags:
       - "v*"
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing or newly published release tag to attest.
+        description: Existing draft release tag to build and attest before publication.
         required: true
         type: string
 
@@ -52,19 +50,24 @@ jobs:
         run: npm pack --dry-run --cache /tmp/pulse-npm-cache
 
   release-evidence:
-    if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       attestations: write
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
+      - name: Confirm immutable-release draft boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "true"
+
       - name: Checkout release tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          ref: ${{ inputs.release_tag }}
 
       - name: Verify release tag identity
         run: |
@@ -109,7 +112,7 @@ jobs:
       - name: Upload release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pulse-release-evidence-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          name: pulse-release-evidence-${{ inputs.release_tag }}
           path: release-artifacts/
           if-no-files-found: error
           retention-days: 90

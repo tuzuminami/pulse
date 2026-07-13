@@ -96,15 +96,20 @@ Suite definitions are stored as test fixtures. PULSE redacts run traces before p
 
 ## Release Evidence
 
-Published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, and verification log as GitHub Release assets. The CI copy expires after 90 days; the Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest.
+Published releases retain a public `pulse-release-decision.json`, `pulse-release-evaluation.json`, CycloneDX SBOM, package tarball, verification log, and verifier as GitHub Release assets. The CI copy expires after 90 days; the immutable GitHub Release assets are the audit record. GitHub Artifact Attestations cover the package, SBOM, and decision manifest.
 
 The evaluation bundle is intentionally synthetic: it runs only `examples/suite.public-demo.json` against a deterministic fixture, saves its baseline and comparison result, and records SHA-256 hashes. It proves that the release canary and its declared baseline passed; it does not claim to evaluate a production target or store customer traffic.
 
 ```bash
-gh release download v<version> --repo tuzuminami/pulse --pattern 'pulse-release-*'
-gh attestation verify pulse-release-decision.json --repo tuzuminami/pulse
+gh release download v<version> --repo tuzuminami/pulse --pattern '*'
+for asset in <downloaded-release-artifact-directory>/*; do
+  gh release verify-asset v<version> "$asset" --repo tuzuminami/pulse
+done
+gh attestation verify <downloaded-release-artifact-directory>/pulse-release-decision.json --repo tuzuminami/pulse
 node <downloaded-release-artifact-directory>/verify-release-evidence.mjs --artifact-dir <downloaded-release-artifact-directory>
 ```
+
+Release evidence is built only for an existing draft release. After the workflow passes, publish that draft with GitHub immutable releases enabled; do not upload or replace assets after publication.
 
 Changes to public baselines, fixtures, or evaluators need an issue or pull request that explains the expected decision change and rollback path. A baseline is not refreshed merely to hide a failure.
 
