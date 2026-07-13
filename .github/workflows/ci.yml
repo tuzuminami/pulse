@@ -151,6 +151,7 @@ jobs:
     env:
       PULSE_RELEASE_TAG: ${{ github.event.release.tag_name }}
       PULSE_RELEASE_ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
+      PULSE_RELEASE_IS_IMMUTABLE: ${{ github.event.release.immutable }}
     steps:
       - name: Checkout released tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
