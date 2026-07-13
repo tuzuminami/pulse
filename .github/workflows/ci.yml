@@ -5,6 +5,16 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or newly published release tag to attest.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -40,3 +50,54 @@ jobs:
 
       - name: Verify package contents
         run: npm pack --dry-run --cache /tmp/pulse-npm-cache
+
+  release-evidence:
+    if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release source
+        run: pnpm run check
+
+      - name: Build release tarball
+        run: mkdir -p release-artifacts && npm pack --pack-destination release-artifacts --json
+
+      - name: Generate CycloneDX SBOM
+        run: pnpm run sbom
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pulse-release-evidence-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          path: release-artifacts/
+          if-no-files-found: error
+
+      - name: Attest release package and SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release-artifacts/*.tgz
+          sbom-path: release-artifacts/pulse-sbom.cdx.json
+
+      - name: Attach SBOM to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}" release-artifacts/pulse-sbom.cdx.json --clobber

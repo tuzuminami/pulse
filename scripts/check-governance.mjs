@@ -5,7 +5,7 @@ const required = new Map([
   [".github/PULL_REQUEST_TEMPLATE.md", ["Compatibility", "Tenant isolation", "Release Impact"]],
   [".github/ISSUE_TEMPLATE/bug-report.yml", ["Minimal synthetic reproduction", "tenant isolation"]],
   [".github/ISSUE_TEMPLATE/feature-request.yml", ["VEIL receipt compatibility", "Migration, rollout, rollback"]],
-  [".github/MAINTAINER_GOVERNANCE.md", ["Require the `verify` status check", "Block force pushes", "SBOM/provenance"]]
+  [".github/MAINTAINER_GOVERNANCE.md", ["Require the `verify` status check", "Block force pushes", "CycloneDX SBOM", "Artifact Attestations"]]
 ]);
 
 for (const [path, fragments] of required) {

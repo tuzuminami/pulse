@@ -15,6 +15,7 @@ private-fixtures/
 node_modules/
 dist/
 coverage/
+release-artifacts/
 .pulse/
 .env
 .env.*

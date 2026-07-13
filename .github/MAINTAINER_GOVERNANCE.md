@@ -26,6 +26,11 @@ gh api repos/tuzuminami/pulse/branches/main/protection
 
 ## Release Baseline
 
-Only release from a green `main` commit through a pull request. Before creating `v*` tags or GitHub Releases, retain CI, package dry-run, compatibility, security-review, SBOM/provenance, and rollback evidence. Do not rewrite a public tag; publish a corrective patch release instead.
+Only release from a green `main` commit through a pull request. The published-release workflow creates the npm tarball and reproducible CycloneDX SBOM, uploads both as workflow evidence, attaches the SBOM to the GitHub Release, and signs package provenance plus the SBOM through GitHub Artifact Attestations. Do not rewrite a public tag; publish a corrective patch release instead.
 
-The supply-chain issue owns the implementation of SBOM and provenance generation. This document defines the approval and evidence contract without duplicating that implementation.
+Verify published evidence with:
+
+```bash
+gh release download v<version> --repo tuzuminami/pulse --pattern 'pulse-sbom.cdx.json'
+gh attestation verify <package-tarball> --repo tuzuminami/pulse
+```
