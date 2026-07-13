@@ -35,8 +35,9 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "prepack": "pnpm run build && pnpm run check:private-boundary",
     "test": "node --test dist/tests/*.test.js",
-    "check": "pnpm run build && pnpm run test && pnpm run check:private-boundary && pnpm run pack:dry-run",
+    "check": "pnpm run build && pnpm run test && pnpm run check:governance && pnpm run check:private-boundary && pnpm run pack:dry-run",
     "check:veil-contract": "node scripts/check-veil-contract.mjs",
+    "check:governance": "node scripts/check-governance.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
     "pack:dry-run": "npm pack --dry-run --cache /tmp/pulse-npm-cache"
   },

@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible public PULSE defect without private evaluation data.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic fixtures only. Do not include secrets, private prompts, or production traces.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Include the PULSE version, Node version, and redacted command or request.
+    validations:
+      required: true
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact assessment
+      options:
+        - label: This affects tenant isolation, authentication, idempotency, audit evidence, or VEIL receipt compatibility.
+        - label: This affects a migration, package consumer, CI workflow, or release artifact.
