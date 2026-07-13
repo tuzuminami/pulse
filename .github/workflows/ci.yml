@@ -97,7 +97,13 @@ jobs:
           path: release-artifacts/
           if-no-files-found: error
 
-      - name: Attest release package and SBOM
+      - name: Attest release package provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release-artifacts/*.tgz
+          create-storage-record: false
+
+      - name: Attest release package SBOM
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: release-artifacts/*.tgz
