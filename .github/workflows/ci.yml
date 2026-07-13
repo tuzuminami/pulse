@@ -102,6 +102,7 @@ jobs:
         with:
           subject-path: release-artifacts/*.tgz
           sbom-path: release-artifacts/pulse-sbom.cdx.json
+          create-storage-record: false
 
       - name: Attach SBOM to GitHub release
         env:
