@@ -64,12 +64,6 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
 
-      - name: Checkout release evidence tooling
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.sha }}
-          path: .release-evidence-tools
-
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -86,6 +80,12 @@ jobs:
 
       - name: Build release tarball
         run: mkdir -p release-artifacts && npm pack --pack-destination release-artifacts --json
+
+      - name: Checkout release evidence tooling
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: .release-evidence-tools
 
       - name: Generate CycloneDX SBOM
         run: node .release-evidence-tools/scripts/generate-sbom.mjs
