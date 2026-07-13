@@ -66,6 +66,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true"
 
+      - name: Confirm private vulnerability reporting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/private-vulnerability-reporting" --jq '.enabled')" = "true"
+
       - name: Confirm release tag was pushed
         env:
           GH_TOKEN: ${{ github.token }}

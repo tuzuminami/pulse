@@ -30,6 +30,8 @@ Only release from a green `main` commit through a pull request. Create and push 
 
 The active `Protect version tags` repository ruleset applies to `refs/tags/v*` and denies deletion and non-fast-forward updates, with no bypass actors. This protects the interval between evidence generation and immutable-release publication. The published-release verifier independently checks that the decision manifest source commit equals the released tag commit.
 
+GitHub Private Vulnerability Reporting is enabled. The release-evidence workflow checks this setting before it creates or attaches release evidence, so an accidental configuration change fails release preparation rather than silently removing the private disclosure path. Verify the live setting with `gh api repos/tuzuminami/pulse/private-vulnerability-reporting`.
+
 The synthetic evaluation bundle contains only the all-public `examples/suite.public-demo.json` fixture, its generated baseline, redacted run result, regression decision, and SHA-256 hashes. It is a deterministic release canary, not evidence of a customer's production target. The release-decision manifest binds this bundle to the release tag, source commit, lockfile hash, runtime versions, verification log, package tarball, and SBOM.
 
 Any baseline threshold, public fixture, or evaluator change requires an issue or pull request that states the rationale, expected regression effect, rollback path, and review evidence. Do not silently refresh a baseline to make a failing release pass.
