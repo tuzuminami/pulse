@@ -38,6 +38,7 @@ try {
   execFileSync(process.execPath, ["scripts/verify-release-evidence.mjs", "--artifact-dir", temporary], { stdio: "pipe" });
   const decision = JSON.parse(readFileSync(join(temporary, "pulse-release-decision.json"), "utf8"));
   check(decision.release?.tag === tag, "decision manifest tag must match the published release");
+  check(decision.release?.sourceCommit === execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), "decision manifest source commit must match the published tag");
   check(decision.release?.package?.name === packageJson.name && decision.release?.package?.version === packageJson.version, "decision manifest package identity must match the released tag");
 
   const consumer = join(temporary, "consumer");
