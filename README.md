@@ -45,9 +45,15 @@ node dist/src/cli.js baseline:create --suite examples/suite.public-demo.json --s
 node dist/src/cli.js run --suite examples/suite.public-demo.json --target http://localhost:3000 --store .pulse/store.json
 node dist/src/cli.js regression:check --store .pulse/store.json
 PULSE_RECEIPT_HMAC_KEY=... node dist/src/cli.js shadow:check --receipt receipt.json --decision replayed-decision.json --tenant-id tenant_demo --subject-hash <sha256> --receipt-key-id key-2026-01
+node dist/src/cli.js veil:replay-check --receipt veil-receipt.json --decision veil-replayed-decision.json
 ```
 
 `regression:check` exits with `1` when observed metrics breach the stored baseline.
+`veil:replay-check` compares a public VEIL v1 receipt with replayed VEIL decision evidence and exits with `1` on mismatch. It does not use PULSE HMAC keys or require a VEIL runtime dependency.
+
+VEIL receipt hashes are deterministic integrity checks, not caller authentication. Use this replay path for regression evidence only; do not make authorization decisions from an untrusted receipt file.
+
+The normal `pnpm run check` is offline and repeatable. CI pins `pnpm run check:veil-contract` to the VEIL `v1.0.0` receipt schema, then runs the same check against VEIL `main` as an explicit compatibility monitor. Both compare parsed JSON with `tests/fixtures/veil-decision-receipt-v1.schema.json`; any upstream change fails the monitor. Override the URL with `VEIL_RECEIPT_SCHEMA_URL` when validating another public schema.
 
 ## SDK
 

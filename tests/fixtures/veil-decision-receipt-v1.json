@@ -1,0 +1,17 @@
+{
+  "receiptVersion": "veil-decision-receipt/1.0",
+  "decisionId": "decision_public_fixture_1",
+  "tenantId": "tenant_public_fixture",
+  "policyId": "policy_public_fixture",
+  "policyVersion": "1.0.0",
+  "policyHash": "policy-hash-public-fixture",
+  "action": "ALLOW",
+  "reasonCodes": ["LOW_RISK_ALLOWED"],
+  "obligations": ["AUDIT_LOG"],
+  "matchedRuleId": "allow-low-risk",
+  "inputHash": "input-hash-public-fixture",
+  "evidenceHash": "evidence-hash-public-fixture",
+  "correlationId": "corr-public-fixture",
+  "createdAt": "2026-07-13T00:00:00.000Z",
+  "receiptHash": "1b2477b4fb01d08fee4a217e2014dabbb83a96bc5c57b558e7711a730fa82b5c"
+}

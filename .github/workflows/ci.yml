@@ -30,5 +30,13 @@ jobs:
       - name: Build, test, and boundary scan
         run: pnpm run check
 
+      - name: Verify VEIL v1 receipt contract
+        run: pnpm run check:veil-contract
+
+      - name: Monitor VEIL receipt compatibility
+        env:
+          VEIL_RECEIPT_SCHEMA_URL: https://raw.githubusercontent.com/tuzuminami/veil/main/schemas/decision-receipt.schema.json
+        run: pnpm run check:veil-contract
+
       - name: Verify package contents
         run: npm pack --dry-run --cache /tmp/pulse-npm-cache

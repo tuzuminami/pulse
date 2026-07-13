@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tuzuminami.github.io/veil/schemas/decision-receipt.schema.json",
+  "title": "DecisionReceipt",
+  "type": "object",
+  "required": ["receiptVersion", "decisionId", "tenantId", "policyId", "policyVersion", "policyHash", "action", "reasonCodes", "obligations", "inputHash", "evidenceHash", "correlationId", "createdAt", "receiptHash"],
+  "properties": {
+    "receiptVersion": { "const": "veil-decision-receipt/1.0" },
+    "decisionId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "policyId": { "type": "string", "minLength": 1 },
+    "policyVersion": { "type": "string", "minLength": 1 },
+    "policyHash": { "type": "string", "minLength": 1 },
+    "action": { "enum": ["ALLOW", "TRANSFORM", "REQUIRE_CONFIRMATION", "BLOCK", "ESCALATE"] },
+    "reasonCodes": { "type": "array", "items": { "type": "string" } },
+    "obligations": { "type": "array", "items": { "type": "string" } },
+    "matchedRuleId": { "type": "string" },
+    "inputHash": { "type": "string", "minLength": 1 },
+    "evidenceHash": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "receiptHash": { "type": "string", "minLength": 1 }
+  }
+}
