@@ -13,7 +13,7 @@ import {
   saveRun
 } from "../src/index.js";
 
-import type { CreateDecisionReceiptOptions, DecisionResult, EvalSuiteVersion } from "../src/index.js";
+import type { CreateDecisionReceiptOptions, DecisionResult, EvalSuiteVersion, WriteContext } from "../src/index.js";
 
 const suite: EvalSuiteVersion = {
   suiteId: "cli-suite",
@@ -58,6 +58,13 @@ const receiptOptions: CreateDecisionReceiptOptions = {
     key: "pulse-v1-test-signing-key"
   }
 };
+const writeContext: WriteContext = {
+  tenantId: "tenant_cli",
+  actorId: "actor:cli-test",
+  correlationId: "corr_cli_test",
+  reasonCode: "TEST_FIXTURE",
+  now: () => "2026-07-13T00:00:00.000Z"
+};
 
 test("TEST-CLI-001 selects a matching baseline when stores contain multiple suites", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pulse-cli-"));
@@ -69,9 +76,9 @@ test("TEST-CLI-001 selects a matching baseline when stores contain multiple suit
   });
   const otherSuite = { ...suite, suiteId: "other-cli-suite" };
 
-  await saveBaseline(store, createBaseline(suite, "cli-baseline"));
-  await saveRun(store, run);
-  await saveBaseline(store, createBaseline(otherSuite, "other-cli-baseline"));
+  await saveBaseline(store, createBaseline(suite, "cli-baseline"), writeContext);
+  await saveRun(store, run, writeContext);
+  await saveBaseline(store, createBaseline(otherSuite, "other-cli-baseline"), writeContext);
 
   const result = spawnSync(process.execPath, [cliPath.pathname, "regression:check", "--store", store], {
     encoding: "utf8"

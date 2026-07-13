@@ -20,7 +20,7 @@ import {
   validateSuite
 } from "../src/index.js";
 
-import type { CreateDecisionReceiptOptions, DecisionReceiptKeyResolver, DecisionResult, EvalRun, EvalSuiteVersion, ShadowReplayVerificationContext } from "../src/index.js";
+import type { CreateDecisionReceiptOptions, DecisionReceiptKeyResolver, DecisionResult, EvalRun, EvalSuiteVersion, ShadowReplayVerificationContext, WriteContext } from "../src/index.js";
 
 const suite: EvalSuiteVersion = {
   suiteId: "public-demo-suite",
@@ -73,6 +73,13 @@ const replayContext: ShadowReplayVerificationContext = {
     tenantId === receiptOptions.tenantId && keyId === receiptOptions.signer.keyId
       ? receiptOptions.signer.key
       : undefined
+};
+const writeContext: WriteContext = {
+  tenantId: "tenant_demo",
+  actorId: "actor:test",
+  correlationId: "corr_test",
+  reasonCode: "TEST_FIXTURE",
+  now: () => "2026-07-13T00:00:00.000Z"
 };
 
 describe("PULSE evaluation MVP", () => {
@@ -447,9 +454,9 @@ describe("PULSE evaluation MVP", () => {
     });
     const baseline = createBaseline(suite, "baseline_store");
 
-    await saveSuite(storePath, suite);
-    await saveRun(storePath, run);
-    await saveBaseline(storePath, baseline);
+    await saveSuite(storePath, suite, writeContext);
+    await saveRun(storePath, run, writeContext);
+    await saveBaseline(storePath, baseline, writeContext);
 
     const snapshot = await readStore(storePath);
     const raw = await readFile(storePath, "utf8");
@@ -459,7 +466,53 @@ describe("PULSE evaluation MVP", () => {
     equal(snapshot.baselines.length, 1);
     equal(snapshot.auditEvents.length, 3);
     equal(snapshot.outboxEvents.length, 3);
+    deepEqual(snapshot.auditEvents.map((event) => ({
+      tenantId: event.tenantId,
+      actorId: event.actorId,
+      correlationId: event.correlationId,
+      reasonCode: event.reasonCode,
+      occurredAt: event.occurredAt
+    })), [
+      { tenantId: "tenant_demo", actorId: "actor:test", correlationId: "corr_test", reasonCode: "TEST_FIXTURE", occurredAt: "2026-07-13T00:00:00.000Z" },
+      { tenantId: "tenant_demo", actorId: "actor:test", correlationId: "corr_test", reasonCode: "TEST_FIXTURE", occurredAt: "2026-07-13T00:00:00.000Z" },
+      { tenantId: "tenant_demo", actorId: "actor:test", correlationId: "corr_test", reasonCode: "TEST_FIXTURE", occurredAt: "2026-07-13T00:00:00.000Z" }
+    ]);
     ok(!JSON.stringify(snapshot.runs).includes("hello accepted"));
     ok(raw.includes("bodyHash"));
+  });
+
+  it("TEST-AUDIT-002 rejects an un-attributed write before persistence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pulse-write-context-"));
+    const storePath = join(dir, "store.json");
+
+    await rejects(
+      () => saveSuite(storePath, suite, undefined as never),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "VALIDATION_FAILED"
+    );
+
+    const snapshot = await readStore(storePath);
+    equal(snapshot.suites.length, 0);
+    equal(snapshot.auditEvents.length, 0);
+    equal(snapshot.outboxEvents.length, 0);
+  });
+
+  it("TEST-AUDIT-003 rejects an invalid audit timestamp before persistence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pulse-write-clock-"));
+    const storePath = join(dir, "store.json");
+
+    await rejects(
+      () => saveSuite(storePath, suite, { ...writeContext, now: () => "not-a-timestamp" }),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "VALIDATION_FAILED"
+    );
+
+    equal((await readStore(storePath)).auditEvents.length, 0);
   });
 });

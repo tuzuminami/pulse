@@ -20,7 +20,8 @@ import type {
   DecisionReceiptKeyResolver,
   DecisionResult,
   EvalCase,
-  EvalSuiteVersion
+  EvalSuiteVersion,
+  WriteContext
 } from "./pulse-eval.js";
 
 export interface PulseApiOptions {
@@ -782,12 +783,13 @@ function isLeaseExpired(leaseExpiresAt: string | undefined): boolean {
   return leaseExpiresAt === undefined || Date.parse(leaseExpiresAt) <= Date.now();
 }
 
-function writeContext(context: RequestContext, reasonCode: string) {
+function writeContext(context: RequestContext, reasonCode: string): WriteContext {
   return {
     tenantId: context.tenantId,
     actorId: context.actorId,
     correlationId: context.correlationId,
-    reasonCode
+    reasonCode,
+    now: () => new Date().toISOString()
   };
 }
 
