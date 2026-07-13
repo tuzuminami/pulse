@@ -79,5 +79,9 @@ export type {
   PulseApiOptions,
   PulseHttpRequest,
   PulseHttpResponse,
+  PulseTargetCredentialProvider,
+  PulseTargetCredentialRequest,
+  PulseTargetCredentials,
+  PulseTargetHeaderTemplate,
   PulseTargetPolicy
 } from "./http-api.js";

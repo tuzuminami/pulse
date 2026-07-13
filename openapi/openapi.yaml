@@ -47,7 +47,7 @@ paths:
     post:
       operationId: runSuite
       summary: Run a published suite against a deterministic HTTP target
-      description: Target execution is denied unless the self-host supplies a targetPolicy allow rule.
+      description: Target execution is denied unless the self-host supplies a targetPolicy allow rule. Target credentials are resolved only by the self-host at execution time; clients cannot submit target credentials in a suite or run request.
       parameters:
         - $ref: "#/components/parameters/TenantId"
         - $ref: "#/components/parameters/CorrelationId"
@@ -89,7 +89,7 @@ paths:
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
         "503":
-          $ref: "#/components/responses/RunPending"
+          $ref: "#/components/responses/RunUnavailable"
         "422":
           $ref: "#/components/responses/ValidationFailed"
   /v1/runs/{runId}:
@@ -247,6 +247,12 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     RunPending:
       description: A matching run request is still executing. Retry the same idempotency key after the pending reservation completes or expires.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RunUnavailable:
+      description: Run execution is unavailable. `IDEMPOTENCY_REQUEST_PENDING` means a matching request is executing; `TARGET_CREDENTIALS_UNAVAILABLE` and `TARGET_CREDENTIALS_INVALID` mean the target was not called and the idempotency key was not reserved.
       content:
         application/json:
           schema:

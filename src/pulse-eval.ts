@@ -180,6 +180,13 @@ export interface RunOptions {
   readonly suite: EvalSuiteVersion;
   readonly target: TargetConfig;
   readonly correlationId?: string;
+  /**
+   * Runtime-only target headers. They are deliberately excluded from suites,
+   * traces, stored runs, audit events, and outbox events.
+   */
+  readonly requestHeaders?: Readonly<Record<string, string>>;
+  /** Runtime-only per-case headers, for example a downstream idempotency key. */
+  readonly requestHeadersForCase?: (caseId: string) => Readonly<Record<string, string>>;
   readonly fetchImpl?: typeof fetch;
   readonly evaluatorRegistry?: EvaluatorRegistry;
   readonly idGenerator?: () => string;
@@ -279,6 +286,9 @@ export function validateSuite(suite: EvalSuiteVersion): void {
     if (!testCase.input.path.startsWith("/") || testCase.input.path.startsWith("//")) {
       throw new PulseEvalError("VALIDATION_FAILED", "case.input.path must be a relative HTTP path.");
     }
+    if (testCase.input.path.includes("\\") || /[\u0000-\u001f]/.test(testCase.input.path)) {
+      throw new PulseEvalError("VALIDATION_FAILED", "case.input.path contains unsafe URL characters.");
+    }
     if (testCase.input.method !== "POST") {
       throw new PulseEvalError("VALIDATION_FAILED", "case.input.method must be POST.");
     }
@@ -314,6 +324,7 @@ export async function runEvaluationSuite(options: RunOptions): Promise<EvalRun> 
   validateSuite(options.suite);
   validateTarget(options.target);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const requestHeaders = normalizeRuntimeRequestHeaders(options.requestHeaders);
   const evaluatorRegistry = options.evaluatorRegistry ?? createDefaultEvaluatorRegistry();
   const caseResults: CaseResult[] = [];
 
@@ -322,6 +333,8 @@ export async function runEvaluationSuite(options: RunOptions): Promise<EvalRun> 
       await executeCase(
         testCase,
         options.target,
+        requestHeaders,
+        options.requestHeadersForCase,
         fetchImpl,
         evaluatorRegistry,
         options.now ?? (() => Date.now())
@@ -675,6 +688,8 @@ export function canonicalJson(value: unknown): string {
 async function executeCase(
   testCase: EvalCase,
   target: TargetConfig,
+  requestHeaders: Readonly<Record<string, string>>,
+  requestHeadersForCase: ((caseId: string) => Readonly<Record<string, string>>) | undefined,
   fetchImpl: typeof fetch,
   evaluatorRegistry: EvaluatorRegistry,
   now: () => number
@@ -682,6 +697,11 @@ async function executeCase(
   const requestBody = canonicalJson(testCase.input.body);
   const startedAt = now();
   let timedOut = false;
+  const targetUrl = resolveCaseTargetUrl(testCase.input.path, target.baseUrl);
+  const caseRequestHeaders = normalizeRuntimeRequestHeaders({
+    ...requestHeaders,
+    ...(requestHeadersForCase?.(testCase.id) ?? {})
+  });
 
   try {
     const controller = new AbortController();
@@ -690,9 +710,10 @@ async function executeCase(
       controller.abort();
     }, target.timeoutMs);
     try {
-      const response = await fetchImpl(new URL(testCase.input.path, target.baseUrl), {
+      const response = await fetchImpl(targetUrl, {
         method: testCase.input.method,
         headers: {
+          ...caseRequestHeaders,
           "content-type": "application/json"
         },
         body: requestBody,
@@ -777,6 +798,38 @@ async function executeCase(
       reasonCode: "TARGET_UNAVAILABLE"
     };
   }
+}
+
+function normalizeRuntimeRequestHeaders(headers: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> {
+  if (!headers) return {};
+  const normalized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lowerName = name.toLowerCase();
+    if (
+      !/^[a-z0-9-]+$/.test(lowerName) ||
+      lowerName === "content-length" ||
+      lowerName === "connection" ||
+      lowerName === "host" ||
+      typeof value !== "string" ||
+      /[\r\n]/.test(value)
+    ) {
+      throw new PulseEvalError("VALIDATION_FAILED", "Runtime target request headers are invalid.");
+    }
+    if (lowerName in normalized) {
+      throw new PulseEvalError("VALIDATION_FAILED", "Runtime target request headers must not contain duplicate names.");
+    }
+    normalized[lowerName] = value;
+  }
+  return normalized;
+}
+
+function resolveCaseTargetUrl(path: string, targetBaseUrl: string): URL {
+  const targetOrigin = new URL(targetBaseUrl).origin;
+  const url = new URL(path, targetBaseUrl);
+  if (url.origin !== targetOrigin) {
+    throw new PulseEvalError("VALIDATION_FAILED", "case.input.path must resolve within target.baseUrl origin.");
+  }
+  return url;
 }
 
 function evaluateResponse(

@@ -81,6 +81,8 @@ The included HTTP handler is a deterministic harness boundary, not a production 
 
 `POST /v1/shadow-replays` compares a captured `pulse.decision-receipt.v1` object with a replayed decision. A receipt is HMAC-SHA256 signed by a tenant-bound trusted key and binds `tenantId`, `subjectHash`, `issuedAt`, `outcome`, `reasonCode`, and `policyReference`. The key resolver receives both `tenantId` and `keyId`; do not use a cross-tenant key lookup. It never stores request or response bodies or key material.
 
+Authenticated evaluation targets are configured only by the self-host. `targetPolicy.credentialProvider` receives the verified tenant, normalized HTTPS target origin, correlation ID, and PULSE operation idempotency key at execution time; it returns allowlisted credential headers from the host's secret manager. `headerTemplates` can propagate only `X-Tenant-Id`, `X-Correlation-Id`, and an opaque per-case `Idempotency-Key` derived from trusted PULSE context. PULSE never forwards the caller's `Authorization` header to a target, rejects origin-changing case paths, and excludes target credentials from suites, traces, runs, audit events, snapshots, and error bodies. A missing or invalid credential provider result returns `TARGET_CREDENTIALS_UNAVAILABLE` or `TARGET_CREDENTIALS_INVALID` without exposing the value.
+
 ## Security And Data Notes
 
 Use synthetic fixtures. Do not put secrets, production conversation logs, private prompts, or local operator material in suites, traces, issues, pull requests, package artifacts, or CI logs.
