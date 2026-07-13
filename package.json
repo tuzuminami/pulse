@@ -39,6 +39,7 @@
     "check:veil-contract": "node scripts/check-veil-contract.mjs",
     "check:governance": "node scripts/check-governance.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
+    "sbom": "node scripts/generate-sbom.mjs",
     "pack:dry-run": "npm pack --dry-run --cache /tmp/pulse-npm-cache"
   },
   "devDependencies": {
