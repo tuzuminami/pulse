@@ -38,4 +38,5 @@ Verify published evidence with:
 gh release download v<version> --repo tuzuminami/pulse --pattern 'pulse-sbom.cdx.json'
 gh attestation verify <package-tarball> --repo tuzuminami/pulse
 gh attestation verify pulse-release-decision.json --repo tuzuminami/pulse
+node <downloaded-release-artifact-directory>/verify-release-evidence.mjs --artifact-dir <downloaded-release-artifact-directory>
 ```

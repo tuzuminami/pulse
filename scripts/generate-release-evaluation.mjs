@@ -11,9 +11,7 @@ const pulse = await import(pathToFileURL(resolve(releaseSource, "dist/src/pulse-
 const suiteText = await readFile(suitePath, "utf8");
 const suite = JSON.parse(suiteText);
 
-if (!Array.isArray(suite.cases) || suite.cases.some((testCase) => testCase.classification !== "public")) {
-  throw new Error("Release evaluation requires an all-public synthetic suite.");
-}
+assertPublicCanarySuite(suite);
 
 let clock = 0;
 const baseline = pulse.createBaseline(suite, `${suite.suiteId}-${suite.version}-release-canary`);
@@ -37,7 +35,7 @@ if (regression.ciExitCode !== 0) {
 const evidence = {
   schemaVersion: "pulse.release-evaluation.v1",
   synthetic: true,
-  suite: { path: "examples/suite.public-demo.json", sha256: sha256(suiteText), value: suite },
+  suite: { path: "examples/suite.public-demo.json", sha256: sha256(pulse.canonicalJson(suite)), value: suite },
   baseline: { sha256: sha256(pulse.canonicalJson(baseline)), value: baseline },
   run: { sha256: sha256(pulse.canonicalJson(run)), value: run },
   regression: { sha256: sha256(pulse.canonicalJson(regression)), value: regression }
@@ -60,4 +58,23 @@ function parseOptions(args) {
 
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function assertPublicCanarySuite(value) {
+  const expected = {
+    suiteId: "public-demo-suite",
+    version: "1.0.0",
+    status: "published",
+    cases: [{
+      id: "case-hello",
+      input: { path: "/chat", method: "POST", body: { prompt: "hello" } },
+      expected: { jsonFieldEquals: { field: "message", value: "hello accepted" } },
+      tags: ["smoke"],
+      classification: "public"
+    }],
+    thresholds: { minPassRate: 1, maxInconclusiveRate: 0 }
+  };
+  if (JSON.stringify(value) !== JSON.stringify(expected)) {
+    throw new Error("Release evaluation requires the exact public synthetic canary fixture.");
+  }
 }

@@ -103,6 +103,7 @@ The evaluation bundle is intentionally synthetic: it runs only `examples/suite.p
 ```bash
 gh release download v<version> --repo tuzuminami/pulse --pattern 'pulse-release-*'
 gh attestation verify pulse-release-decision.json --repo tuzuminami/pulse
+node <downloaded-release-artifact-directory>/verify-release-evidence.mjs --artifact-dir <downloaded-release-artifact-directory>
 ```
 
 Changes to public baselines, fixtures, or evaluators need an issue or pull request that explains the expected decision change and rollback path. A baseline is not refreshed merely to hide a failure.
