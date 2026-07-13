@@ -62,7 +62,7 @@ jobs:
       - name: Confirm immutable-release draft boundary
         env:
           GH_TOKEN: ${{ github.token }}
-        run: test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "true"
+        run: test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true"
 
       - name: Checkout release tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
